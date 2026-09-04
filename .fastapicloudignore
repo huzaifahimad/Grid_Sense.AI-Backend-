@@ -2,9 +2,7 @@
 # deployed bundle lean and avoids uploading raw/training artifacts.
 data/raw/
 ingestion/
-models/train_baselines.py
 models/train_lstm_cnn.py
-models/risk_classifier.py
 requirements.txt
 requirements-vercel.txt
 render.yaml
