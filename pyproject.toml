@@ -24,5 +24,17 @@ dependencies = [
 # Training-only deps (shap, scikit-learn, entsoe-py, kaggle, torch) live
 # in requirements.txt, used locally, never deployed.
 
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# This project is an API server, not an installable library. FastAPI Cloud runs
+# it via the [tool.fastapi] entrypoint, not by importing an installed package.
+# Declaring packages = [] avoids setuptools' flat-layout ambiguity error
+# ("Multiple top-level packages discovered") when pip install . is run during
+# the deploy build step.
+packages = []
+
 [tool.fastapi]
 entrypoint = "api.main:app"
