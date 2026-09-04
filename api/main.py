@@ -25,7 +25,22 @@ serverless function convention — see DEPLOYMENT_GUIDE.md.
 
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
+_ROOT = Path(__file__).parent.parent
+sys.path.append(str(_ROOT))
+
+# Preload vendored OpenMP runtime on Linux before lightgbm imports.
+# lightgbm's compiled lib_lightgbm.so links against libgomp.so.1; some PaaS
+# base images (FastAPI Cloud's included) don't ship it. Loading our vendored
+# copy into the process first satisfies the symbol lookup at import time.
+if sys.platform.startswith("linux"):
+    _vendored_libgomp = _ROOT / "vendor" / "libgomp.so.1"
+    if _vendored_libgomp.exists():
+        try:
+            import ctypes
+            ctypes.CDLL(str(_vendored_libgomp), mode=ctypes.RTLD_GLOBAL)
+            print(f"[api] preloaded vendored libgomp from {_vendored_libgomp}")
+        except OSError as _e:
+            print(f"[api] WARNING: could not preload vendored libgomp: {_e}")
 
 import json
 from datetime import datetime
