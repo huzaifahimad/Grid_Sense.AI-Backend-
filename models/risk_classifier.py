@@ -36,9 +36,12 @@ from config import DATA_FEATURES_DIR, MODELS_DIR
 
 try:
     import lightgbm as lgb
-    import shap
 except ImportError:
-    raise ImportError("Missing dependency. Run: pip install lightgbm shap scikit-learn --break-system-packages")
+    raise ImportError("Missing dependency. Run: pip install lightgbm scikit-learn")
+
+# NOTE: shap is imported lazily inside precompute_bucketed_shap — it is a
+# training-only dependency and must NOT be imported at module level, because
+# api/main.py imports FEATURE_COLS from this module on every request.
 
 
 FEATURE_COLS = [
@@ -78,6 +81,10 @@ def precompute_bucketed_shap(model, test_valid: pd.DataFrame, probs: np.ndarray)
     a small JSON lookup. This is what makes it safe to drop shap/numba/
     llvmlite from the live serving dependencies entirely.
     """
+    try:
+        import shap
+    except ImportError:
+        raise ImportError("shap is a training-only dependency. Run: pip install shap")
     print("[risk_classifier] computing SHAP values once at training time "
           "(this is the only place shap runs — not in the live API)...")
     explainer = shap.TreeExplainer(model)
