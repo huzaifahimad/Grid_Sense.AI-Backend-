@@ -1,0 +1,14 @@
+# Minimal deps for Vercel serverless deployment. NO shap, NO scikit-learn.
+# shap pulls in numba+llvmlite+scipy (~95MB combined) — that's most of
+# Vercel's 250MB serverless function budget gone before your own code runs.
+# scikit-learn is only needed for training-time metrics, not serving.
+# SHAP explanations are precomputed at training time instead — see
+# models/risk_classifier.py and data/models/risk_factors_by_bucket.json.
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+pyarrow>=14.0.0
+lightgbm>=4.0.0
+joblib>=1.3.0

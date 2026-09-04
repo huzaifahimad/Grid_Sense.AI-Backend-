@@ -1,0 +1,31 @@
+# Secrets — NEVER commit these
+.env
+.env.local
+*.env
+config_local.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+venv/
+.venv/
+
+# Raw ingestion data — bulky, regenerable, don't version.
+data/raw/*.parquet
+
+# NOTE: data/models/*.joblib, data/models/risk_factors_by_bucket.json, and
+# data/features/training_features.parquet are INTENTIONALLY committed.
+# The live API reads these directly at startup/request time. This is a
+# known shortcut for a pilot/demo deployment — a real production system
+# should pull from a database or scheduled refresh job instead of a
+# static file baked into the deploy. See docs/06_Pipeline_Documentation.md.
+
+# Kaggle credentials if ever placed in-repo by mistake
+kaggle.json
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,58 @@
+{
+  "low": [
+    {
+      "feature": "load_lag_1h",
+      "contribution": -0.5469
+    },
+    {
+      "feature": "hour_sin",
+      "contribution": -0.2211
+    },
+    {
+      "feature": "month_sin",
+      "contribution": -0.0399
+    }
+  ],
+  "moderate": [
+    {
+      "feature": "load_lag_1h",
+      "contribution": 3.6154
+    },
+    {
+      "feature": "hour_sin",
+      "contribution": 0.4226
+    },
+    {
+      "feature": "temperature_c",
+      "contribution": 1.1391
+    }
+  ],
+  "elevated": [
+    {
+      "feature": "load_lag_1h",
+      "contribution": 3.5386
+    },
+    {
+      "feature": "hour_sin",
+      "contribution": 0.7852
+    },
+    {
+      "feature": "temperature_c",
+      "contribution": 1.4456
+    }
+  ],
+  "critical": [
+    {
+      "feature": "load_lag_1h",
+      "contribution": 4.743
+    },
+    {
+      "feature": "temperature_c",
+      "contribution": 2.0245
+    },
+    {
+      "feature": "hour_sin",
+      "contribution": 1.8815
+    }
+  ]
+}

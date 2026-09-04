@@ -1,0 +1,13 @@
+# Minimal deps for running the API server only — this is what Render installs.
+# Training/ingestion needs the full requirements.txt, run that locally instead.
+# NO shap, NO scikit-learn here — see requirements-vercel.txt and
+# models/risk_classifier.py for why (SHAP runs once at training time, the live
+# API reads a precomputed JSON lookup instead of importing shap per request).
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+pyarrow>=14.0.0
+lightgbm>=4.0.0
+joblib>=1.3.0

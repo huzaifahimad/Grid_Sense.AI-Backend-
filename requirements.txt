@@ -1,0 +1,25 @@
+# Full dependency set for LOCAL training/ingestion. The live API deployed via
+# pyproject.toml only needs the lean subset — see requirements-api.txt.
+#
+# Versions are PINNED, not >=, on purpose. An earlier install with only >=
+# constraints silently pulled pandas 3.0.2 (a major version with real breaking
+# changes from 2.x) and lightgbm 4.7.0 (which deprecated the eval_set= API used
+# in models/*.py). Both were caught by actually running the pipeline, not by
+# reading the code. Pinning exact tested versions here prevents that surprise
+# from recurring silently. If you deliberately want to move to newer versions,
+# do it as a conscious upgrade — re-run the full pipeline and check for new
+# deprecation warnings, don't let pip pick a newer version for you by accident.
+entsoe-py==0.6.19
+pandas==3.0.2
+numpy==2.4.4
+requests==2.32.3
+pyarrow==25.0.1
+scikit-learn==1.8.0
+lightgbm==4.7.0
+shap==0.52.0
+torch>=2.1.0
+joblib==1.5.3
+fastapi==0.141.1
+uvicorn==0.52.4
+kaggle>=1.6.0
+pydantic==2.13.4

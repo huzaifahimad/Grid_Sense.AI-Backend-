@@ -1,0 +1,24 @@
+# FALLBACK DEPLOY OPTION — not the primary target.
+#
+# Primary deploy target is FastAPI Cloud (fastapicloud.com) via
+# `fastapi deploy` — see docs/05_Deployment_Guide.md. This file is kept
+# as a documented alternative in case FastAPI Cloud is ever unavailable,
+# or if a card becomes available and Render's persistent-process model
+# is preferred for a production (non-free) deployment later.
+#
+# To use: Render dashboard -> New -> Blueprint -> connect this repo.
+# Requires a card on file even for the free tier (Render's anti-abuse
+# policy) — this is why FastAPI Cloud is the primary target instead.
+
+services:
+  - type: web
+    name: gridsense-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-api.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENTSOE_API_KEY
+        sync: false   # set manually in the Render dashboard — never in this file
+      - key: PYTHON_VERSION
+        value: 3.12.3

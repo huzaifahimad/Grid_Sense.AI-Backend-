@@ -1,0 +1,19 @@
+# Training-only code and data — not needed by the live API, keeps the
+# deployed bundle lean and avoids uploading raw/training artifacts.
+data/raw/
+ingestion/
+models/train_baselines.py
+models/train_lstm_cnn.py
+models/risk_classifier.py
+requirements.txt
+requirements-vercel.txt
+render.yaml
+*.csv
+__pycache__/
+*.pyc
+
+# Un-ignore what the live API actually needs at runtime, in case any
+# broader .gitignore rule above would otherwise exclude these
+!data/models/*.joblib
+!data/models/risk_factors_by_bucket.json
+!data/features/training_features.parquet

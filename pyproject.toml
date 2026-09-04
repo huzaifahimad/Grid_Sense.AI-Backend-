@@ -1,0 +1,28 @@
+[project]
+name = "gridsense-api"
+version = "1.0.0"
+description = "GridSense AI — power grid overload risk prediction API"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]==0.141.1",
+    "uvicorn[standard]==0.52.4",
+    "pydantic==2.13.4",
+    "pandas==3.0.2",
+    "numpy==2.4.4",
+    "pyarrow==25.0.1",
+    "lightgbm==4.7.0",
+    "joblib==1.5.3",
+]
+# Pinned exact versions, not ranges — see requirements.txt for why (a >= range
+# silently pulled a breaking pandas major version during testing). These exact
+# versions are the ones the pipeline was actually verified against.
+# Deliberately no shap, no scikit-learn in the SERVING dependency set.
+# Those pull in numba+llvmlite+scipy transitively (~95MB combined),
+# tested and confirmed to push the deployable bundle over common
+# serverless size limits. SHAP runs once at training time instead —
+# see models/risk_classifier.py and data/models/risk_factors_by_bucket.json.
+# Training-only deps (shap, scikit-learn, entsoe-py, kaggle, torch) live
+# in requirements.txt, used locally, never deployed.
+
+[tool.fastapi]
+entrypoint = "api.main:app"
