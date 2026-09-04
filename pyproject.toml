@@ -12,17 +12,17 @@ dependencies = [
     "pyarrow==25.0.1",
     "lightgbm==4.7.0",
     "joblib==1.5.3",
+    "scikit-learn==1.8.0",
 ]
 # Pinned exact versions, not ranges — see requirements.txt for why (a >= range
 # silently pulled a breaking pandas major version during testing). These exact
 # versions are the ones the pipeline was actually verified against.
-# Deliberately no shap, no scikit-learn in the SERVING dependency set.
-# Those pull in numba+llvmlite+scipy transitively (~95MB combined),
-# tested and confirmed to push the deployable bundle over common
-# serverless size limits. SHAP runs once at training time instead —
-# see models/risk_classifier.py and data/models/risk_factors_by_bucket.json.
-# Training-only deps (shap, scikit-learn, entsoe-py, kaggle, torch) live
-# in requirements.txt, used locally, never deployed.
+# Deliberately no shap in the SERVING dependency set — it pulls in numba+llvmlite
+# transitively and runs once at training time only (the live API reads a
+# precomputed JSON lookup from data/models/risk_factors_by_bucket.json instead).
+# scikit-learn IS required at serve time because the risk classifier is a
+# pickled sklearn pipeline that joblib cannot deserialize without sklearn on
+# the import path.
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
