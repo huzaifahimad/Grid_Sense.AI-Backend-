@@ -43,7 +43,7 @@ if sys.platform.startswith("linux"):
             print(f"[api] WARNING: could not preload vendored libgomp: {_e}")
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import joblib
@@ -81,6 +81,34 @@ def _bucket_for_score(score: float) -> str:
     if score >= 0.3:
         return "moderate"
     return "low"
+
+
+def _dashboard_status(score: float) -> str:
+    if score >= 0.8:
+        return "critical"
+    if score >= 0.6:
+        return "elevated"
+    return "normal"
+
+
+def _representative_snapshot(zone_df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
+    complete_rows = zone_df.dropna(subset=feature_cols).sort_values("timestamp")
+    if complete_rows.empty:
+        return complete_rows
+
+    now = datetime.now(timezone.utc)
+    current_slot = complete_rows[
+        (complete_rows["timestamp"].dt.dayofweek == now.weekday())
+        & (complete_rows["timestamp"].dt.hour == now.hour)
+    ]
+    if not current_slot.empty:
+        return current_slot.tail(1)
+
+    current_hour = complete_rows[complete_rows["timestamp"].dt.hour == now.hour]
+    if not current_hour.empty:
+        return current_hour.tail(1)
+
+    return complete_rows.tail(1)
 
 
 @app.on_event("startup")
@@ -224,11 +252,11 @@ def get_risk(zone: str):
         raise HTTPException(503, "Risk model not loaded. Train models first — see README.")
 
     from models.risk_classifier import FEATURE_COLS
-    zone_df = _features_df[_features_df["zone"] == zone].sort_values("timestamp")
+    zone_df = _features_df[_features_df["zone"] == zone]
     if zone_df.empty:
         raise HTTPException(404, f"No data for zone '{zone}'")
 
-    latest_row = zone_df.dropna(subset=FEATURE_COLS).tail(1)
+    latest_row = _representative_snapshot(zone_df, FEATURE_COLS)
     if latest_row.empty:
         raise HTTPException(404, f"No complete feature row available for zone '{zone}'")
 
@@ -261,13 +289,19 @@ def list_assets():
     from models.risk_classifier import FEATURE_COLS
     summaries = []
     for zone in _features_df["zone"].unique():
-        zone_df = _features_df[_features_df["zone"] == zone].sort_values("timestamp")
-        latest = zone_df.dropna(subset=FEATURE_COLS).tail(1)
+        zone_df = _features_df[_features_df["zone"] == zone]
+        latest = _representative_snapshot(zone_df, FEATURE_COLS)
         if latest.empty:
             continue
         score = float(_risk_model.predict_proba(latest[FEATURE_COLS])[0, 1])
-        status = "critical" if score > 0.7 else "elevated" if score > 0.4 else "normal"
-        summaries.append(AssetSummary(asset_id=f"{zone}-FEEDER-01", zone=zone, risk_score=score, status=status))
+        summaries.append(
+            AssetSummary(
+                asset_id=f"{zone}-FEEDER-01",
+                zone=zone,
+                risk_score=score,
+                status=_dashboard_status(score),
+            )
+        )
 
     return sorted(summaries, key=lambda a: -a.risk_score)
 
