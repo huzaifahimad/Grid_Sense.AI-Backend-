@@ -58,12 +58,14 @@ from config import MODELS_DIR, DATA_FEATURES_DIR, ENTSOE_ZONES
 
 app = FastAPI(title="GridSense AI API", version="1.0")
 
-# Allow the frontend dev server to call this API — tighten in production
+_default_cors_origin = "https://grid-senseai.vercel.app"
 _cors_origins = [
     origin.strip()
-    for origin in os.environ.get("CORS_ORIGINS", "*").split(",")
+    for origin in os.environ.get("CORS_ORIGINS", _default_cors_origin).split(",")
     if origin.strip()
 ]
+if not _cors_origins:
+    _cors_origins = [_default_cors_origin]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
