@@ -4,11 +4,14 @@
 # scikit-learn is only needed for training-time metrics, not serving.
 # SHAP explanations are precomputed at training time instead — see
 # models/risk_classifier.py and data/models/risk_factors_by_bucket.json.
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
-pydantic>=2.0.0
-pandas>=2.0.0
-numpy>=1.24.0
-pyarrow>=14.0.0
-lightgbm>=4.0.0
-joblib>=1.3.0
+# Pinned to the same exact serving versions as pyproject.toml / requirements-api.txt.
+# scikit-learn is required at serve time to unpickle the risk classifier.
+fastapi[standard]==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.4
+pandas==3.0.2
+numpy==2.4.4
+pyarrow==25.0.1
+lightgbm==4.7.0
+joblib==1.5.3
+scikit-learn==1.8.0

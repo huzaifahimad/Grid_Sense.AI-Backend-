@@ -89,11 +89,11 @@ quality — not something to paper over by moving straight to a fancier model.
 ### 4.1 Label leakage in the risk classifier (found and fixed)
 
 Original `FEATURE_COLS` for the risk classifier included `load_to_capacity_ratio` — the
-exact quantity the proxy label is thresholded on. Result: PR-AUC of 0.9997 and every
+exact quantity the proxy label is thresholded on. Result: near-perfect PR-AUC and every
 zone returning an identical risk score to 13 decimal places, both symptoms of the model
 reading the answer off a near-copy of the label rather than learning anything. Fixed by
-removing that feature from the classifier's inputs. PR-AUC dropped to a more honest
-0.9654 after the fix — confirming the leak was real, not noise.
+removing that feature from the classifier's inputs. The current synthetic pipeline run
+reports a more honest PR-AUC of 0.9595 after the fix.
 
 **If you retrain from scratch and see PR-AUC suspiciously close to 1.0 again, or
 identical scores across zones, this is the first thing to check.**

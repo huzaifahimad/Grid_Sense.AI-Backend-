@@ -2,57 +2,57 @@
   "low": [
     {
       "feature": "load_lag_1h",
-      "contribution": -0.5469
+      "contribution": -1.0719
     },
     {
-      "feature": "hour_sin",
-      "contribution": -0.2211
+      "feature": "load_lag_24h",
+      "contribution": -0.2896
     },
     {
-      "feature": "month_sin",
-      "contribution": -0.0399
+      "feature": "load_roll_mean_24h",
+      "contribution": -0.1599
     }
   ],
   "moderate": [
     {
       "feature": "load_lag_1h",
-      "contribution": 3.6154
+      "contribution": 3.4688
     },
     {
-      "feature": "hour_sin",
-      "contribution": 0.4226
+      "feature": "load_roll_mean_24h",
+      "contribution": 0.1697
     },
     {
-      "feature": "temperature_c",
-      "contribution": 1.1391
+      "feature": "month_sin",
+      "contribution": 0.8956
     }
   ],
   "elevated": [
     {
       "feature": "load_lag_1h",
-      "contribution": 3.5386
+      "contribution": 3.8138
     },
     {
-      "feature": "hour_sin",
-      "contribution": 0.7852
+      "feature": "load_roll_mean_24h",
+      "contribution": 0.5862
     },
     {
-      "feature": "temperature_c",
-      "contribution": 1.4456
+      "feature": "load_lag_24h",
+      "contribution": 0.9821
     }
   ],
   "critical": [
     {
       "feature": "load_lag_1h",
-      "contribution": 4.743
+      "contribution": 5.1953
     },
     {
-      "feature": "temperature_c",
-      "contribution": 2.0245
+      "feature": "load_roll_mean_24h",
+      "contribution": 1.6722
     },
     {
-      "feature": "hour_sin",
-      "contribution": 1.8815
+      "feature": "month_sin",
+      "contribution": 1.2158
     }
   ]
 }

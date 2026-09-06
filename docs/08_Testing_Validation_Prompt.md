@@ -82,7 +82,7 @@ for what's real vs. synthetic in the current state).
 For each of these specific claims made in the docs, verify it's still true by checking
 the actual code, not by trusting the document:
 
-- TRD Section 4.1: "PR-AUC 0.9654 after fixing leak" — does `models/risk_classifier.py`
+- TRD Section 4.1: "PR-AUC 0.9595 after fixing leak" — does `models/risk_classifier.py`
   still exclude `load_to_capacity_ratio` from `FEATURE_COLS`? Confirm by reading the
   actual list in the file.
 - System Architecture Section 2.2: "282MB minimum for Vercel serverless, over the

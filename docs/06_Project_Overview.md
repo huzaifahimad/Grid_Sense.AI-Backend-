@@ -37,9 +37,9 @@ right now.
 **2. Real bugs were found and fixed by actually running the system, not just writing it.**
 Most notably: the risk classifier initially had a label-leakage bug (a feature that was
 near-identical to the target it was predicting), producing a suspiciously perfect
-PR-AUC of 0.9997 and identical risk scores across every grid zone. This was caught by
+PR-AUC and identical risk scores across every grid zone. This was caught by
 live-testing the deployed API and noticing the identical scores, traced to the leak, and
-fixed — dropping PR-AUC to an honest 0.9654. That's the kind of finding that only
+fixed — the current synthetic pipeline run reports an honest PR-AUC of 0.9595. That's the kind of finding that only
 surfaces from actually running a system, and it's documented rather than swept aside.
 
 ## What the system actually does, end to end

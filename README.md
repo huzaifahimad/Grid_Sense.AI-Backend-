@@ -17,10 +17,12 @@ GridSense AI predicts electricity grid overload **before it happens**. It ingest
 grid load data (ENTSO-E Transparency Platform) and weather data (NASA POWER), engineers
 leak-free time-series features, and serves two trained models through a REST API:
 
-- **Load Forecaster** (LightGBM regressor) — hourly demand forecast with P10/P50/P90
-  uncertainty bands. MAPE **1.72%** vs. 5.52% persistence baseline.
+- **Load Forecaster** (LightGBM regressor) — hourly demand forecast. The API still
+  returns p10/p50/p90 fields; **p10/p90 are a fixed ±8% band around the LightGBM
+  point forecast**, not learned quantile estimates. On the current synthetic pipeline run,
+  MAPE is **2.23%** vs. **6.59%** persistence baseline.
 - **Overload Risk Classifier** (LightGBM classifier) — per-zone risk score with
-  precomputed SHAP explanations. PR-AUC **0.9683**.
+  precomputed SHAP explanations. Current synthetic-run PR-AUC **0.9595**.
 - **Load-Shedding Recommender** (rules-based) — priority-ranked shedding schedule with
   human-readable reasoning. The system *recommends*; it never controls anything.
 
@@ -64,7 +66,7 @@ keep the deployed footprint lean.
 | Endpoint | Method | Description |
 |---|---|---|
 | `/` | GET | Health check — service status and configured zones |
-| `/forecast/{zone}?horizon_hours=24` | GET | Load forecast with P10/P50/P90 bands (1–48h) |
+| `/forecast/{zone}?horizon_hours=24` | GET | Load forecast; p50 is LightGBM, p10/p90 are a fixed ±8% band |
 | `/risk/{zone}` | GET | Overload risk score, bucket, top SHAP factors, load vs. capacity |
 | `/assets` | GET | Risk-ranked list of all monitored assets across zones |
 | `/shed-schedule/{zone}` | GET | Recommended load-shedding priorities with reasoning |
@@ -125,6 +127,7 @@ Full run order and real-vs-synthetic breakdown:
 | Variable | Where | Required | Purpose |
 |---|---|---|---|
 | `ENTSOE_API_KEY` | FastAPI Cloud secret store / local shell | Only for real-data ingestion | ENTSO-E Transparency Platform API token. **Never commit it** — `config.py` reads it from the environment only. |
+| `CORS_ORIGINS` | FastAPI Cloud environment | Production | Comma-separated exact frontend origins, for example `https://your-project.vercel.app`; unset defaults to open CORS for local/demo use. |
 
 Set it on FastAPI Cloud:
 

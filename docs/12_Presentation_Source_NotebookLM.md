@@ -109,7 +109,7 @@ just as effective at this data scale.
 # Slide 7: A Bug We Found — and Why That Matters
 
 Early in testing, the overload risk model showed a suspiciously perfect accuracy score
-(PR-AUC of 0.9997) — and every single grid zone returned an *identical* risk score, down
+(near-perfect PR-AUC) — and every single grid zone returned an *identical* risk score, down
 to thirteen decimal places.
 
 That's not a good sign. It's the signature of **data leakage**: a feature that's a
@@ -119,7 +119,7 @@ the model was reading the answer off a hidden copy of itself rather than actuall
 learning anything.
 
 **The fix:** remove that feature from the model's inputs. Accuracy dropped to a more
-honest 0.9654 afterward.
+honest 0.9595 on the current synthetic pipeline run.
 
 **Why this is worth a slide of its own:** a lower, honest number after fixing a real bug
 is a better outcome than a suspiciously perfect one — and this kind of issue only

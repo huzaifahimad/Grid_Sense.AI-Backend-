@@ -43,6 +43,7 @@ if sys.platform.startswith("linux"):
             print(f"[api] WARNING: could not preload vendored libgomp: {_e}")
 
 import json
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -58,9 +59,14 @@ from config import MODELS_DIR, DATA_FEATURES_DIR, ENTSOE_ZONES
 app = FastAPI(title="GridSense AI API", version="1.0")
 
 # Allow the frontend dev server to call this API — tighten in production
+_cors_origins = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ORIGINS", "*").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -231,8 +237,10 @@ def get_forecast(zone: str, horizon_hours: int = Query(default=24, ge=1, le=48))
     valid = latest.dropna(subset=FEATURE_COLS)
 
     preds = _lightgbm_model.predict(valid[FEATURE_COLS])
-    # Point-estimate model — approximate P10/P90 with a fixed band until the
-    # quantile LSTM+CNN model is trained and swapped in here
+    # Point-estimate LightGBM — P10/P90 are a fixed ±8% band around the point
+    # forecast, NOT learned quantiles. models/train_lstm_cnn.py defines a
+    # pinball-loss LSTM+CNN, but no lstm_cnn_forecast.pt artifact is trained or
+    # loaded here. Do not describe this endpoint as uncertainty quantification.
     points = [
         ForecastPoint(
             timestamp=row.timestamp.isoformat(),

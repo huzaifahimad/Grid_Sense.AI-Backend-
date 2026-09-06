@@ -27,26 +27,39 @@ from config import DATA_RAW_DIR, ENTSOE_ZONES, ZONE_COORDINATES
 np.random.seed(42)
 
 
+# Per-zone shape offsets. Using one shared diurnal/seasonal curve made load/capacity
+# ratios nearly identical across ES/GR/IT_SOUTH at any given timestamp, so the live
+# dashboard (which snapshots "now" weekday+hour) showed all three zones at ~99%
+# critical simultaneously — reproduced 2026-09-06 against the deployed API.
+ZONE_LOAD_SHAPE = {
+    "ES": {"morning_shift": 6, "evening_shift": 18, "weekend_drop": -0.08, "seasonal_amp": 0.18, "seasonal_peak_doy": 200, "noise_sigma": 0.020},
+    "GR": {"morning_shift": 8, "evening_shift": 21, "weekend_drop": -0.14, "seasonal_amp": 0.28, "seasonal_peak_doy": 218, "noise_sigma": 0.028},
+    "IT_SOUTH": {"morning_shift": 5, "evening_shift": 15, "weekend_drop": -0.04, "seasonal_amp": 0.12, "seasonal_peak_doy": 155, "noise_sigma": 0.016},
+}
+
+
 def generate_load(zone: str, start: pd.Timestamp, end: pd.Timestamp, base_load: float) -> pd.DataFrame:
     timestamps = pd.date_range(start, end, freq="h", tz="UTC")
     n = len(timestamps)
+    shape = ZONE_LOAD_SHAPE[zone]
 
     hour = timestamps.hour.values
     dow = timestamps.dayofweek.values
     doy = timestamps.dayofyear.values
 
-    # diurnal pattern: morning + evening peaks, night trough
-    diurnal = 0.15 * np.sin((hour - 6) / 24 * 2 * np.pi) + 0.10 * np.sin((hour - 18) / 12 * 2 * np.pi)
-    # weekly pattern: lower on weekends
-    weekly = np.where(dow >= 5, -0.08, 0.0)
-    # seasonal: summer AC peak (approximates the AC-driven demand this project cares about)
-    seasonal = 0.20 * np.sin((doy - 172) / 365 * 2 * np.pi)  # peak near day 172 (~summer solstice)
-    # slow multi-year growth trend
+    # diurnal pattern: morning + evening peaks, night trough — phase differs by zone
+    diurnal = (
+        0.15 * np.sin((hour - shape["morning_shift"]) / 24 * 2 * np.pi)
+        + 0.10 * np.sin((hour - shape["evening_shift"]) / 12 * 2 * np.pi)
+    )
+    weekly = np.where(dow >= 5, shape["weekend_drop"], 0.0)
+    seasonal = shape["seasonal_amp"] * np.sin(
+        (doy - shape["seasonal_peak_doy"]) / 365 * 2 * np.pi
+    )
     trend = np.linspace(0, 0.04, n)
-    # autocorrelated noise (AR(1)) instead of pure white noise — real load isn't that clean
     noise = np.zeros(n)
     for i in range(1, n):
-        noise[i] = 0.85 * noise[i - 1] + np.random.normal(0, 0.02)
+        noise[i] = 0.85 * noise[i - 1] + np.random.normal(0, shape["noise_sigma"])
 
     load = base_load * (1 + diurnal + weekly + seasonal + trend + noise)
     load = np.clip(load, base_load * 0.4, base_load * 1.6)

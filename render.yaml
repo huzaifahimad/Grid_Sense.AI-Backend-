@@ -22,3 +22,5 @@ services:
         sync: false   # set manually in the Render dashboard — never in this file
       - key: PYTHON_VERSION
         value: 3.12.3
+      - key: CORS_ORIGINS
+        sync: false   # set to the exact deployed Vercel origin

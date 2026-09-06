@@ -90,9 +90,9 @@ product performance without re-running on real data first.
 
 | Model | MAPE | MAE (MW) | RMSE (MW) |
 |---|---|---|---|
-| Persistence (t-24h) | 5.60% | 213.47 | 276.52 |
-| Seasonal-naive (t-168h) | 4.62% | 178.74 | 230.15 |
-| **LightGBM** | **1.76%** | **66.97** | **86.84** |
+| Persistence (t-24h) | 6.59% | 221.09 | 288.03 |
+| Seasonal-naive (t-168h) | 5.20% | 181.00 | 231.56 |
+| **LightGBM** | **2.23%** | **76.67** | **97.08** |
 
 LightGBM clears both baselines by a wide margin. Expect this margin to shrink and MAPE
 to rise on real data — synthetic data is smoother and more learnable by construction.
@@ -101,17 +101,17 @@ models — that is the credible external reference point, not this synthetic res
 
 ### Risk classification
 
-PR-AUC: 0.9654 (after fixing a label-leakage bug — see Section 4.1).
+PR-AUC: 0.9595 on the current synthetic pipeline run (after removing the label-leakage feature).
 
 ### 4.1 Bug found and fixed during live testing
 
-Initial PR-AUC was 0.9997 with all three zones returning an identical risk score to 13
+An earlier validation run showed near-perfect PR-AUC with all three zones returning an identical risk score to 13
 decimal places. Root cause: `load_to_capacity_ratio` was both an input feature AND the
 basis of the proxy label (`overload = load/capacity > 0.9`), so the classifier was
 reading the label off a near-copy of itself rather than learning anything. Fixed by
 removing that feature from the risk classifier's `FEATURE_COLS` (it remains available
 for the shed-schedule rules layer, which legitimately needs it). PR-AUC dropped to
-0.9654 post-fix — a lower, honest number, which is the correct outcome of fixing real
+0.9595 post-fix — a lower, honest number, which is the correct outcome of fixing real
 leakage, not a regression.
 
 ---

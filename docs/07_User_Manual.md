@@ -58,8 +58,9 @@ Detail for whichever zone is currently selected:
 ### 04 — 24H Load Forecast (bottom center, chart)
 A forecast chart for the selected zone, showing predicted load for the next 24 hours.
 - The solid line is the median forecast (P50).
-- The shaded band and dashed lines above/below show the uncertainty range (P10 to P90)
-  — the model's honest acknowledgment that it can't predict exactly, only a likely range.
+- The shaded band and dashed lines above/below show an approximate display band (P10 to P90
+  fields calculated as fixed -8%/+8% around the point forecast). It is not a learned
+  uncertainty or quantile estimate.
 - The chart automatically updates when you select a different zone.
 
 ### Footer bar
