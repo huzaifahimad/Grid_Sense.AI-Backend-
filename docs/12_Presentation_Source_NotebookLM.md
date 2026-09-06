@@ -12,7 +12,7 @@ short and scannable on purpose — this is written to be presented, not read as 
 
 **GridSense AI**
 Power Grid Overload Risk Prediction for Pakistan
-Built by Huzaifa Himad
+Built by Huzaifa Himad's Team
 
 ---
 
@@ -239,4 +239,4 @@ discovery, tested (not assumed) deployment architecture, and transparent limitat
 can be applied to a problem that matters: predicting grid overload before it happens, in
 a country where that prediction gap has a real, measurable cost.
 
-**Built by Huzaifa Himad.**
+**Built by Huzaifa Himad's Team.**
