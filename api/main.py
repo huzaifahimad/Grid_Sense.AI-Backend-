@@ -195,6 +195,26 @@ def _representative_snapshot(zone_df: pd.DataFrame, feature_cols: list[str]) -> 
     return complete_rows.tail(1)
 
 
+def _contiguous_hourly_tail(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Longest suffix of rows spaced exactly one hour apart.
+
+    recursive_forecast indexes history positionally (lag 1h/24h/168h = -1/-24/-168
+    rows) but labels its output from the final timestamp alone. A missing hour
+    therefore shifts every lag feature out of true while the returned timestamps
+    still look plausible — a silently wrong forecast rather than a loud failure.
+    """
+    n = len(df)
+    if n < 2:
+        return df
+    ordered = df.sort_values("timestamp").reset_index(drop=True)
+    gap_h = ordered["timestamp"].diff().dt.total_seconds() / 3600.0
+    start = n - 1
+    while start > 0 and abs(float(gap_h.iloc[start]) - 1.0) < 1e-9:
+        start -= 1
+    return ordered.iloc[start:]
+
+
 # ------------------------------------------------------------
 # Response schemas
 
@@ -227,7 +247,11 @@ class RiskResponse(BaseModel):
     risk_score: float
     status: str
     snapshot_timestamp: str
-    predicted_load_mw: float
+    # Observed load on the historical row the score was computed from. Deliberately
+    # NOT called "predicted": /risk scores a real snapshot, while /forecast produces
+    # the forward-looking numbers. Naming them alike made two dashboard panels
+    # disagree about "the load" by ~800MW.
+    snapshot_load_mw: float
     capacity_mw: float
     top_factors: list[RiskFactor]
     is_proxy_capacity: bool
@@ -344,9 +368,17 @@ def get_forecast(zone: str, horizon_hours: int = Query(default=24, ge=1, le=MAX_
     if _state["features"] is None or _state["forecast_model"] is None:
         raise HTTPException(503, "Models not loaded. Train models first — see README.")
 
-    history = _zone_frame(zone)[["timestamp", "load_mw", "temperature_c", "humidity_pct", "wind_speed_ms"]].dropna()
+    history = _contiguous_hourly_tail(
+        _zone_frame(zone)[
+            ["timestamp", "load_mw", "temperature_c", "humidity_pct", "wind_speed_ms"]
+        ].dropna()
+    )
     if len(history) < MIN_HISTORY_HOURS:
-        raise HTTPException(503, f"Need {MIN_HISTORY_HOURS}h of history for zone '{zone}', have {len(history)}")
+        raise HTTPException(
+            503,
+            f"Need {MIN_HISTORY_HOURS}h of gap-free history for zone '{zone}', "
+            f"have {len(history)}",
+        )
 
     forecast = recursive_forecast(_state["forecast_model"], history, horizon_hours, FORECAST_FEATURE_COLS)
     forecast = apply_intervals(forecast, _state["intervals"])
@@ -393,7 +425,7 @@ def get_risk(zone: str):
         risk_score=risk_score,
         status=dashboard_status(risk_score),
         snapshot_timestamp=latest_row["timestamp"].iloc[0].isoformat(),
-        predicted_load_mw=float(latest_row["load_mw"].iloc[0]),
+        snapshot_load_mw=float(latest_row["load_mw"].iloc[0]),
         capacity_mw=float(latest_row["capacity_mw"].iloc[0]),
         top_factors=[RiskFactor(**f) for f in factors],
         is_proxy_capacity=bool(latest_row["capacity_is_proxy"].iloc[0]),
@@ -431,21 +463,18 @@ def get_shed_schedule(zone: str):
     Rules layer, NOT a model — System Architecture doc Section 2.
     Only elevated/critical assets get a recommendation (priority 1 = critical,
     2 = elevated), using the same thresholds as the dashboard status so the
-    two never disagree. Critical infrastructure is never recommended.
-    Advisory only: an operator must approve any shed action.
+    two never disagree. Advisory only: an operator must approve any shed action.
     """
     risk = get_risk(zone)
 
-    CRITICAL_ASSETS = {"HOSPITAL", "WATER_PUMP"}
-    if any(tag in risk.asset_id for tag in CRITICAL_ASSETS):
-        return []
     priority = shed_priority(risk.risk_score)
     if priority is None:
         return []
 
-    margin = risk.capacity_mw - risk.predicted_load_mw
+    margin = risk.capacity_mw - risk.snapshot_load_mw
+    snapshot_hour = risk.snapshot_timestamp[:16].replace("T", " ")
     reasoning = (
-        f"Predicted load {risk.predicted_load_mw:.0f}MW against "
+        f"Load {risk.snapshot_load_mw:.0f}MW at {snapshot_hour}Z against "
         f"{'estimated (proxy)' if risk.is_proxy_capacity else 'rated'} capacity "
         f"{risk.capacity_mw:.0f}MW — margin {margin:.0f}MW, risk score {risk.risk_score:.2f}"
     )

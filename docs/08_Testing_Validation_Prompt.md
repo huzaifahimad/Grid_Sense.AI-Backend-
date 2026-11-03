@@ -55,9 +55,12 @@ for what's real vs. synthetic in the current state).
 1. `cd gridsense-frontend && npm install && npm run build`. Confirm zero errors. This
    was tested and confirmed working — if it fails now, something changed, investigate
    what.
-2. Check `src/GridSenseDashboard.jsx` for `import.meta.env.VITE_API_BASE_URL` and
-   `import.meta.env.VITE_USE_MOCK_DATA` — confirm these are still present and read
-   correctly (Vite's env var convention, not `process.env`).
+2. In the **frontend** repository, open
+   [`src/api/client.js`](https://github.com/huzaifahimad/Grid_Sense.AI-frontend-/blob/main/src/api/client.js)
+   — line 9 reads `import.meta.env.VITE_API_BASE_URL` and line 13 reads
+   `import.meta.env.VITE_USE_MOCK_DATA`. Confirm both are still present and read
+   correctly (Vite's env var convention, not `process.env`). The entry point is
+   `src/App.jsx`; there is no `GridSenseDashboard.jsx`.
 3. With the backend running locally from Phase 2, run `npm run dev`, open it, and set
    `VITE_USE_MOCK_DATA=false` with `VITE_API_BASE_URL=http://localhost:8000` in a local
    `.env.local` file to confirm the frontend can actually pull real data from the local
@@ -99,7 +102,7 @@ the actual code, not by trusting the document:
 
 Give a structured report:
 
-- **Backend:** does it run locally, does it deploy, do all 6 endpoints return correct
+- **Backend:** does it run locally, does it deploy, do all 7 endpoints return correct
   real data, is the leak fix still in place, are shap/sklearn/torch still absent from
   the live serving path?
 - **Frontend:** does it build, does it connect to the real backend, does the dashboard

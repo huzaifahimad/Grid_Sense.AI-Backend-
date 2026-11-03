@@ -51,7 +51,7 @@ FEATURE_COLS = [
     # the label (label = ratio > threshold), so including it causes the classifier to
     # read the answer off the feature instead of learning anything. Found via live
     # testing on 2026-08-27 (all zones saturated to identical ~0.999 risk score).
-    # See PIPELINE_VALIDATION_REPORT.md for the full trace.
+    # See docs/04_Pipeline_Documentation.md for the full trace.
     "hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos",
     "is_weekend",
 ]

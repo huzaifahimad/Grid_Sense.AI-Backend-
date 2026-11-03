@@ -4,7 +4,7 @@
 **Author:** Huzaifa Himad
 **Date:** 2026-11-03
 **Scope of this update:** model-validation methodology, backend serving layer, operator dashboard, test suite
-**Status:** implemented, tested (47 tests, CI green), **merged to `main` and deployed on both services** — `/validation` is live and the panel is rendering on the public dashboard
+**Status:** implemented, tested (48 tests, CI green), **merged to `main` and deployed on both services** — `/validation` is live and the panel is rendering on the public dashboard
 
 | Repository | `main` commit | CI | Live status |
 |---|---|---|---|
@@ -172,7 +172,7 @@ configuration — which is why the artifact carries its window, stride, horizon 
 - `models/decision_rules.py` (new) — critical 0.8 / elevated 0.6 / moderate 0.3 thresholds, dashboard bucketing and shed priority now live in **one module** read by both the API and the validator. Previously they were duplicated, so a threshold edit could have made the deployed alerts and the reported metrics describe different systems.
 - `api/main.py` — new `GET /validation`; report loaded at startup alongside the model artifacts; `/health` now reports its load state. Threshold constants removed in favour of `decision_rules`.
 - `models/calibrate_forecast_intervals.py` — made horizon-aware so the validator reuses the calibration machinery instead of reimplementing it.
-- `data/models/closed_loop_report.json` (new artifact, 16 KB) — the committed, version-controlled evidence, with method, runtime, window, artifact provenance and stated limitations.
+- `data/models/closed_loop_report.json` (new artifact, 18 KB) — the committed, version-controlled evidence, with method, runtime, window, artifact provenance and stated limitations.
 - `.fastapicloudignore` — the report is included in the deploy bundle; verified that the serving path still imports nothing beyond the lean dependency set (no `shap`, no `torch`).
 
 **Dashboard**
@@ -180,9 +180,9 @@ configuration — which is why the artifact carries its window, stride, horizon 
 - It loads once on mount and is deliberately isolated from the shared error banner: a `404` reads as "this backend does not expose the endpoint yet", not as an outage. Verified against both a compliant and a non-compliant backend.
 
 **Quality gates**
-- Test suite **28 → 47 tests**; the additions cover gate grading, lead-time arithmetic, event-run segmentation, train/serve rule equivalence, report self-consistency, the endpoint contract, and both negative controls.
+- Test suite **28 → 48 tests**; the additions cover gate grading, lead-time arithmetic, event-run segmentation, train/serve rule equivalence, report self-consistency, the endpoint contract, both negative controls, and a history-contiguity guard added during the post-deploy audit.
 - GitHub Actions green on both repositories (backend `pytest`, frontend `npm run build`).
-- Documentation updated to match the code, including two stale claims corrected in passing: the user manual still described the forecast band as a hardcoded ±8 % display band (it is conformal now), and endpoint counts in three documents were out of date.
+- Documentation updated to match the code, including two stale claims corrected in passing: the user manual still described the forecast band as a hardcoded ±8 % display band (it is conformal now), and endpoint counts were out of date in three documents — now all state the seven routes `api/main.py` defines.
 
 ## 7. Limitations, stated plainly
 
@@ -222,10 +222,36 @@ cd Grid_Sense.AI-Backend- && git checkout main
 pip install -r requirements.txt
 
 python -m models.closed_loop_validation --strict   # ~15 s, rewrites data/models/closed_loop_report.json
-python -m pytest tests -q                          # 47 tests, incl. both negative controls
+python -m pytest tests -q                          # 48 tests, incl. both negative controls
 uvicorn api.main:app --port 8000
 curl http://localhost:8000/validation
 ```
+
+## 10. Post-deploy audit of the running system
+
+After the merge, both repositories were re-audited line by line against the code, the
+installed dependencies and the live services — not against the notes written earlier in
+the project. Seven defects were confirmed and fixed; two reported defects were
+disproved by measurement.
+
+| # | Defect | Consequence | Fix and evidence |
+|---|---|---|---|
+| 1 | `src/config/tokens.js` emits modern space-separated `hsl(5 100% 65%)`, but three.js r185 `Color` only parses the legacy comma form and **silently** falls back to white | Every risk ring in the 3D topology lerped toward white, so a critical zone looked identical to a healthy one — the panel's core signal was absent | `toThreeColor()` normalises before `new THREE.Color()`. Measured against installed three: `#ffffff` → `#ff5b4d` / `#ffb338` / `#3dd687` |
+| 2 | `/risk/{zone}` returned `predicted_load_mw` holding the **observed** load of the historical row it scored | The field name and the shed reasoning claimed a measurement was a forecast; the Zone Inspector showed 6,117 MW for ES while the forecast chart's first hour showed 6,905 MW | Renamed to `snapshot_load_mw`, reasoning reworded to "Load … at …Z", inspector relabels to *Load at Snapshot* and prints the scored hour |
+| 3 | A `CRITICAL_ASSETS` guard tested for `HOSPITAL`/`WATER_PUMP` inside an `asset_id` that is always the synthetic `{zone}-FEEDER-01` | The branch could never run, yet its docstring asserted "critical infrastructure is never recommended" — a safety property the code did not provide | Removed the unreachable branch; the docstring now states only what the rules actually do |
+| 4 | `/forecast` passed `dropna()`-thinned history to a forecaster that indexes lags **by row offset** while stamping output from the final timestamp alone | One missing hour would shift every lag feature and still return plausible-looking numbers — a silently wrong forecast rather than a visible failure | `_contiguous_hourly_tail()` keeps only the gap-free suffix; a new test proves an 83-row hole leaves an 80-row run under the 168 h minimum |
+| 5 | `risk.top_factors.map(...)` was unguarded | A single absent field would throw and blank the whole inspector | `(risk.top_factors ?? [])`, plus `Number.isFinite` guards on the numeric metrics |
+| 6 | The mock `/risk` payload omitted `snapshot_timestamp`, which the real API returns | Simulation mode had quietly drifted from the live contract | Mock now emits the same shape as the backend |
+| 7 | Twelve documentation claims had drifted from the code | README quoted PR-AUC **0.9637**, a value no artifact produces while six other documents say **0.9595**; endpoint counts said 6 where `api/main.py` defines 7; the showcase `/risk` payload was invented; Three.js was listed as 0.128.0 against 0.185.1 installed (the same revision implicated in defect 1); alarm burden was divided by days instead of zone-days; a code comment and a test procedure both pointed at files that no longer exist | Corrected against `closed_loop_report.json`, `package.json`/lockfile and the actual route table |
+
+**Two reported defects were false positives**, and were rejected only after measuring:
+`colorWithAlpha("var(--color-critical)")` does *not* produce an invalid declaration — the
+computed style resolves to `color(srgb 1 0.357 0.298 / 0.08)`, correctly red; and the
+assets loader in `useGridData.js` already abort-guards its rejection, so the suspected
+StrictMode error banner does not occur.
+
+The validator itself was untouched by these fixes, so every §3 number still holds: 48
+tests pass and the replayed report remains 13/13 PASS.
 
 ---
 

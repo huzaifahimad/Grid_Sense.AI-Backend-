@@ -55,7 +55,7 @@ def test_risk_contract(client, zone):
     body = client.get(f"/risk/{zone}").json()
     assert 0.0 <= body["risk_score"] <= 1.0
     assert body["status"] in {"critical", "elevated", "normal"}
-    assert body["capacity_mw"] > 0 and body["predicted_load_mw"] > 0
+    assert body["capacity_mw"] > 0 and body["snapshot_load_mw"] > 0
     assert body["is_proxy_capacity"] is True
     assert body["asset_id"] == f"{zone}-FEEDER-01"
     pd.Timestamp(body["snapshot_timestamp"])
@@ -80,8 +80,42 @@ def test_shed_schedule_matches_status(client, zone):
     else:
         assert len(shed) == 1
         assert shed[0]["priority"] == (1 if risk["status"] == "critical" else 2)
-        expected_margin = risk["capacity_mw"] - risk["predicted_load_mw"]
+        expected_margin = risk["capacity_mw"] - risk["snapshot_load_mw"]
         assert shed[0]["predicted_margin_mw"] == pytest.approx(expected_margin)
+        # The snapshot load is observed, not forecast — the reasoning must not claim otherwise.
+        assert "Predicted load" not in shed[0]["reasoning"]
+        assert risk["snapshot_timestamp"][:16].replace("T", " ") in shed[0]["reasoning"]
+
+
+def test_contiguous_hourly_tail_drops_history_before_a_gap():
+    """A hole in the series must truncate the usable window, never shift the lag features.
+
+    recursive_forecast reads lags by row offset (-1/-24/-168) but stamps its output
+    from the final timestamp only, so a gap would produce plausible, misaligned
+    numbers instead of an error.
+    """
+    from api.main import _contiguous_hourly_tail
+    from models.forecasting import MIN_HISTORY_HOURS
+
+    idx = pd.date_range("2026-01-01", periods=200, freq="h", tz="UTC")
+    df = pd.DataFrame({"timestamp": idx, "load_mw": 1000.0})
+
+    intact = _contiguous_hourly_tail(df)
+    assert len(intact) == 200
+    assert intact["timestamp"].iloc[0] == idx[0]
+
+    gapped = df.drop(df.index[37:120])
+    trimmed = _contiguous_hourly_tail(gapped)
+    assert len(trimmed) == 80
+    assert trimmed["timestamp"].iloc[0] == idx[120]
+    assert trimmed["timestamp"].diff().dt.total_seconds().max() == 3600.0
+
+    # Losing everything before the gap is what pushes the zone under the serving
+    # minimum, so the endpoint rejects it instead of forecasting off misaligned lags.
+    assert len(trimmed) < MIN_HISTORY_HOURS
+
+    assert len(_contiguous_hourly_tail(df.head(1))) == 1
+    assert len(_contiguous_hourly_tail(df.head(0))) == 0
 
 
 def test_serving_path_does_not_import_training_only_deps():

@@ -19,12 +19,12 @@ leak-free time-series features, and serves two trained models through a REST API
 
 - **Load Forecaster** (LightGBM regressor) — recursive 1–48h-ahead demand forecast from
   the latest observation. P10/P90 are **split-conformal intervals** calibrated per horizon
-  on a held-out validation window (test coverage **84.8%** vs. 80% nominal). Honest test
-  MAPE: **2.24%** at 1h ahead, **~4.3%** at 6–48h ahead vs. **~5.1%** seasonal-naive and
+  on a held-out validation window (closed-loop replay coverage **84.3%** vs. 80% nominal).
+  Honest test MAPE: **2.24%** at 1h ahead, **~4.3%** at 6–48h ahead vs. **~5.1%** seasonal-naive and
   **6.59%** persistence. Future weather uses persistence (same hour, previous day) until
   an NWP feed is connected.
 - **Overload Risk Classifier** (LightGBM classifier) — per-zone risk score with
-  precomputed SHAP explanations. Test PR-AUC **0.9637**, Brier **0.0185** (base rate
+  precomputed SHAP explanations. Test PR-AUC **0.9595**, Brier **0.0185** (base rate
   0.0975). Early stopping uses a validation slice, never the test set.
 - **Load-Shedding Recommender** (rules-based) — priority-ranked shedding schedule with
   human-readable reasoning. The system *recommends*; it never controls anything.
@@ -39,7 +39,7 @@ architecture designed to retrain on Pakistani NTDC/DISCO grid data once access i
 > [`docs/04_Pipeline_Documentation.md`](docs/04_Pipeline_Documentation.md) before citing
 > any accuracy number.
 
-**Tests:** `python -m pytest tests -q` — 47 tests covering endpoint contracts, train/serve
+**Tests:** `python -m pytest tests -q` — 48 tests covering endpoint contracts, train/serve
 feature parity, label-leak guard, interval calibration, the lean serving import path, and
 the closed-loop validator (gate grading, lead-time math, and negative controls that prove
 the gates fail when they should).
@@ -76,26 +76,30 @@ keep the deployed footprint lean.
 | `/` | GET | Liveness — service status and configured zones |
 | `/health` | GET | Readiness — per-artifact load state, serving data window, interval method |
 | `/forecast/{zone}?horizon_hours=24` | GET | Recursive forecast (1–48h) with calibrated P10/P50/P90, origin timestamp and step |
-| `/risk/{zone}` | GET | Overload risk score, bucket, top SHAP factors, load vs. capacity |
+| `/risk/{zone}` | GET | Overload risk score, status, top SHAP factors, and the load vs. capacity of the scored snapshot |
 | `/assets` | GET | Risk-ranked list of all monitored assets across zones |
-| `/shed-schedule/{zone}` | GET | Advisory shedding recommendation for elevated/critical zones only (priority 1 = critical ≥0.8, 2 = elevated ≥0.6) |
+| `/shed-schedule/{zone}` | GET | Advisory shedding recommendation — `[]` unless that zone's score clears 0.6, so most zones return an empty list (priority 1 = critical ≥0.8, 2 = elevated ≥0.6) |
 | `/validation` | GET | Closed-loop release-gate report — 13 gates, walk-forward replay metrics, provenance and stated limitations, plus report age in hours |
 
 Example:
 
 ```bash
-curl https://<your-app>.fastapicloud.dev/risk/ES
+curl https://<your-app>.fastapicloud.dev/risk/IT_SOUTH
 ```
 
 ```json
 {
-  "zone": "ES",
-  "risk_score": 0.9999,
-  "predicted_load_mw": 7784.7,
-  "capacity_mw": 7330.78,
+  "zone": "IT_SOUTH",
+  "asset_id": "IT_SOUTH-FEEDER-01",
+  "risk_score": 0.994,
+  "status": "critical",
+  "snapshot_timestamp": "2026-09-01T18:00:00+00:00",
+  "snapshot_load_mw": 4635.7,
+  "capacity_mw": 4921.58,
   "top_factors": [
-    {"feature": "load_lag_1h", "contribution": 4.743},
-    {"feature": "temperature_c", "contribution": 2.0245}
+    {"feature": "load_lag_1h", "contribution": 5.0999},
+    {"feature": "load_roll_mean_24h", "contribution": 1.6008},
+    {"feature": "load_lag_24h", "contribution": 1.0012}
   ],
   "is_proxy_capacity": true
 }
@@ -124,7 +128,7 @@ hard floor. Current report: **overall PASS, 13/13**.
 | Interval honesty | P10–P90 coverage 84.3% (target 70–95%), week-to-week drift 14.2 pts |
 | Forecast warnings | 6-hour-lead overload warnings **83.9% precision** / 77.4% recall over all origins |
 | Alarm quality | precision 87.7%, recall 90.5%, F1 89.1%, Brier skill 0.81 against a 0.097 base rate |
-| Alarm burden | 0.33 false alarms per zone-day (145 false-alarm hours across 145 days) |
+| Alarm burden | 0.33 false alarms per zone-day (145 false-alarm hours across 434 zone-days) |
 | Event response | 188/206 overload events alarmed; **stable median lead 3.0 h**, 51.9% warned ≥3 h ahead |
 | Replay integrity | 10,341 origins replayed, zero gaps in the hourly series |
 
@@ -212,7 +216,7 @@ Step-by-step guide: [`docs/05_Deployment_Guide.md`](docs/05_Deployment_Guide.md)
 ## Project Structure
 
 ```
-├── api/main.py              # FastAPI app — 6 endpoints, model loading
+├── api/main.py              # FastAPI app — 7 endpoints, model loading
 ├── config.py                # Zones, paths, thresholds, env-only API key
 ├── ingestion/               # ENTSO-E, NASA POWER, Kaggle, synthetic bootstrap
 ├── features/                # Leak-free feature engineering (lags, rolling, cyclic)

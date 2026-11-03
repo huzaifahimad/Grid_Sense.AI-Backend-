@@ -27,8 +27,8 @@ rather than assumed.
 |---|---|---|
 | UI framework | React 18.3.1 | Standard, matches Vite's first-class support |
 | Build tool | Vite 5.4.21 | Fast dev server, clean env-var handling (`import.meta.env`), straightforward Vercel deployment |
-| 3D rendering | Three.js 0.128.0 | Powers the grid topology visualization — wireframe nodes, dynamic risk-color rings, dashed transmission lines |
-| Charting | Recharts 2.12.7 | The 24h forecast chart with P10/P50/P90 confidence bands |
+| 3D rendering | Three.js 0.185.1 | Powers the grid topology visualization — wireframe nodes, dynamic risk-color rings, dashed transmission lines |
+| Charting | Recharts 2.15.4 | The 24h forecast chart with P10/P50/P90 confidence bands |
 
 ## Infrastructure / Deployment
 
