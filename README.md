@@ -221,7 +221,7 @@ Step-by-step guide: [`docs/05_Deployment_Guide.md`](docs/05_Deployment_Guide.md)
 ├── data/
 │   ├── features/            # training_features.parquet (committed)
 │   └── models/              # *.joblib + SHAP JSON + baselines CSV + closed_loop_report.json
-├── docs/                    # 13-document suite (TRD → presentation source)
+├── docs/                    # 14-document suite (TRD → presentation source)
 ├── pyproject.toml           # FastAPI Cloud deploy manifest
 ├── requirements.txt         # Full training dependencies
 └── requirements-api.txt     # Lean serving dependencies
@@ -238,6 +238,7 @@ Step-by-step guide: [`docs/05_Deployment_Guide.md`](docs/05_Deployment_Guide.md)
 | [`05_Deployment_Guide.md`](docs/05_Deployment_Guide.md) | Step-by-step deployment |
 | [`06_Project_Overview.md`](docs/06_Project_Overview.md) | Plain-language orientation — start here |
 | [`08_Testing_Validation_Prompt.md`](docs/08_Testing_Validation_Prompt.md) | 6-phase QA verification prompt |
+| [`13_Closed_Loop_Validation_Update.md`](docs/13_Closed_Loop_Validation_Update.md) | Closed-loop replay method, gate results, and the lead-time correction |
 
 ## Related
 
