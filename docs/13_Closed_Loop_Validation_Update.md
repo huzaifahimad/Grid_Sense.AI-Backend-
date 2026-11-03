@@ -4,12 +4,12 @@
 **Author:** Huzaifa Himad
 **Date:** 2026-11-03
 **Scope of this update:** model-validation methodology, backend serving layer, operator dashboard, test suite
-**Status:** implemented, tested (47 tests, CI green), pushed to `production-hardening` on both repositories — **not yet merged to `main`, not yet redeployed**
+**Status:** implemented, tested (47 tests, CI green), **merged to `main` and deployed on both services** — `/validation` is live and the panel is rendering on the public dashboard
 
-| Repository | Branch | Commit | CI |
+| Repository | `main` commit | CI | Live status |
 |---|---|---|---|
-| [Grid_Sense.AI-Backend-](https://github.com/huzaifahimad/Grid_Sense.AI-Backend-/tree/production-hardening) | `production-hardening` | `502cdd8` | passed |
-| [Grid_Sense.AI-frontend-](https://github.com/huzaifahimad/Grid_Sense.AI-frontend-/tree/production-hardening) | `production-hardening` | `a5e7f96` | passed |
+| [Grid_Sense.AI-Backend-](https://github.com/huzaifahimad/Grid_Sense.AI-Backend-) | `af26428` | passed | `GET /validation` and `GET /health` verified 200 on `grid-senseai-backend.fastapicloud.dev` |
+| [Grid_Sense.AI-frontend-](https://github.com/huzaifahimad/Grid_Sense.AI-frontend-) | `1c1a87e` | passed | Panel 05 rendering with live report data on `grid-senseai.vercel.app` |
 
 ---
 
@@ -198,11 +198,10 @@ These are in the report artifact itself and should be read before citing any fig
    horizons is optimistic for the meteorological component.
 4. **Zone-level aggregation.** ENTSO-E zones are control-area-scale, not feeder or transformer
    level; real shedding decisions are made on distribution assets with different granularity.
-5. **Single replay window.** No out-of-time re-validation cadence yet; no drift monitor in
-   production.
-6. **Not yet deployed.** `/validation` and `/health` are live on the branch only; the current
-   FastAPI Cloud deployment returns 404 for both. Merging and redeploying will change the live
-   values the submission was verified against, so it is being held for approval.
+5. **Single replay window, and the report is a snapshot rather than a monitor.** `/validation`
+   returns a committed artifact generated offline, so it certifies the models as of its
+   timestamp; retraining does not regenerate it automatically, there is no scheduled
+   out-of-time revalidation, and there is no drift monitor in production.
 
 ## 8. Next steps
 
@@ -213,13 +212,13 @@ These are in the report artifact itself and should be read before citing any fig
 | 3 | Add an explicit forecast-error decomposition at long horizons (weather vs. model) | Isolates how much of the +24 h error is genuinely meteorological |
 | 4 | Feeder-level granularity and N-1 contingency screening | The level at which shed decisions are actually executed |
 | 5 | Scheduled re-validation and drift monitoring in production | Turns a one-time gate into an ongoing claim |
-| 6 | Merge `production-hardening` to `main` and redeploy | Puts the validation panel on the public URL |
+| 6 | Enforce `--strict` inside the deploy pipeline, not just as a manual local step | A gate that only runs when someone remembers is a suggestion, not a release control |
 
 ## 9. Reproducing this work
 
 ```bash
 git clone https://github.com/huzaifahimad/Grid_Sense.AI-Backend-.git
-cd Grid_Sense.AI-Backend- && git checkout production-hardening
+cd Grid_Sense.AI-Backend- && git checkout main
 pip install -r requirements.txt
 
 python -m models.closed_loop_validation --strict   # ~15 s, rewrites data/models/closed_loop_report.json
