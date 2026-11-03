@@ -32,7 +32,9 @@ architecture, not a theoretical design.
          ▼
 [API — api/main.py, deployed via `fastapi deploy` to FastAPI Cloud]
    - Loads committed model files + feature snapshot at startup
-   - /forecast/{zone}, /risk/{zone}, /assets, /shed-schedule/{zone}
+   - /forecast/{zone}, /risk/{zone}, /assets, /shed-schedule/{zone}, /validation
+   - /validation returns the committed closed-loop replay report (data/models/
+     closed_loop_report.json), loaded at startup like the other artifacts
    - NO shap/scikit-learn/numba/llvmlite in the deployed dependency set
          │
          ▼
@@ -179,7 +181,7 @@ the larger rewrite to reduce the pandas/lightgbm import footprint itself.
   Pipeline Documentation)
 - Real trained LightGBM models for both forecasting and risk classification
 - A found-and-fixed data leakage bug in the risk classifier (documented in TRD Section 4.1)
-- Live-tested API, all 5 endpoints, real JSON responses verified via curl
+- Live-tested API, all 6 endpoints, real JSON responses verified via curl
 - Frontend that builds successfully and connects to the real API via environment variable
 
 **Explicit roadmap, not claimed as done:**

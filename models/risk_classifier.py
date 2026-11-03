@@ -31,7 +31,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 import numpy as np
 import pandas as pd
 import joblib
-from sklearn.metrics import average_precision_score, precision_recall_curve
+from sklearn.metrics import average_precision_score, brier_score_loss, precision_recall_curve
 from config import DATA_FEATURES_DIR, MODELS_DIR
 
 try:
@@ -137,9 +137,14 @@ def train_and_evaluate():
         raise FileNotFoundError(f"{feat_path} not found. Run features/build_features.py first.")
 
     df = pd.read_parquet(feat_path)
-    train_df, test_df = walk_forward_split(df)
+    train_full, test_df = walk_forward_split(df)
+    train_full = train_full.sort_values("timestamp")
+    val_cut = train_full.iloc[int(len(train_full) * 0.9)]["timestamp"]
+    train_df = train_full[train_full["timestamp"] < val_cut]
+    val_df = train_full[train_full["timestamp"] >= val_cut]
 
     train_valid = train_df.dropna(subset=FEATURE_COLS + [TARGET_COL])
+    val_valid = val_df.dropna(subset=FEATURE_COLS + [TARGET_COL])
     test_valid = test_df.dropna(subset=FEATURE_COLS + [TARGET_COL])
 
     pos_rate = train_valid[TARGET_COL].mean()
@@ -157,13 +162,25 @@ def train_and_evaluate():
     )
     model.fit(
         train_valid[FEATURE_COLS], train_valid[TARGET_COL],
-        eval_set=[(test_valid[FEATURE_COLS], test_valid[TARGET_COL])],
+        eval_set=[(val_valid[FEATURE_COLS], val_valid[TARGET_COL])],
         callbacks=[lgb.early_stopping(30, verbose=False)],
     )
+    print(f"[risk_classifier] best_iteration={model.best_iteration_} (selected on val, not test)")
 
     probs = model.predict_proba(test_valid[FEATURE_COLS])[:, 1]
     pr_auc = average_precision_score(test_valid[TARGET_COL], probs)
     print(f"[risk_classifier] PR-AUC (test): {pr_auc:.4f}  <- optimize/report THIS, not ROC-AUC")
+
+    y_test = test_valid[TARGET_COL].to_numpy()
+    brier = brier_score_loss(y_test, probs)
+    print(f"[risk_classifier] Brier score (test): {brier:.4f}  "
+          f"(base-rate reference: {brier_score_loss(y_test, np.full_like(probs, y_test.mean())):.4f})")
+    print("[risk_classifier] reliability (predicted bucket -> observed overload rate):")
+    for label, lo, hi in RISK_BUCKETS:
+        mask = (probs >= lo) & (probs < hi)
+        if mask.sum():
+            print(f"[risk_classifier]   {label:9s} n={mask.sum():5d}  "
+                  f"mean_pred={probs[mask].mean():.3f}  observed={y_test[mask].mean():.3f}")
 
     precision, recall, thresholds = precision_recall_curve(test_valid[TARGET_COL], probs)
     target_precision = 0.5

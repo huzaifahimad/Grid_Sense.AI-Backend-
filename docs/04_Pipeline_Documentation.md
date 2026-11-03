@@ -72,10 +72,15 @@ python -m models.risk_classifier
 
 # Step 6 — (optional, heavier) LSTM+CNN quantile forecaster
 python -m models.train_lstm_cnn
+
+# Step 7 — closed-loop replay of the held-out test window through the serving path.
+# Refuses to certify the models if any release gate drops below its floor (--strict).
+python -m models.closed_loop_validation --strict
 ```
 
-After this, `data/features/training_features.parquet`, `data/models/*.joblib`, and
-`data/models/risk_factors_by_bucket.json` will all reflect REAL data. Commit these files
+After this, `data/features/training_features.parquet`, `data/models/*.joblib`,
+`data/models/risk_factors_by_bucket.json`, and `data/models/closed_loop_report.json` will
+all reflect REAL data. Commit these files
 and redeploy (`fastapi deploy`) to make the live API serve real predictions.
 
 **Do not skip Step 4.** If LightGBM doesn't meaningfully beat persistence and
