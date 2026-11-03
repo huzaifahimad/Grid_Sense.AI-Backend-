@@ -17,4 +17,5 @@ __pycache__/
 !data/models/*.joblib
 !data/models/risk_factors_by_bucket.json
 !data/models/forecast_intervals.json
+!data/models/closed_loop_report.json
 !data/features/training_features.parquet

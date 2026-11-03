@@ -32,29 +32,30 @@ HISTORY = 168
 REPORT_STEPS = [1, 6, 12, 24, 48]
 
 
-def build_origins(zone_df: pd.DataFrame, window_start, window_end, stride: int):
+def build_origins(zone_df: pd.DataFrame, window_start, window_end, stride: int,
+                  horizon: int = HORIZON):
     """Origins whose history and full horizon of actuals lie inside the data."""
     zone_df = zone_df.sort_values("timestamp").reset_index(drop=True)
     loads = zone_df["load_mw"].to_numpy(float)
     weather = zone_df[WEATHER_COLS].to_numpy(float)
     ts = zone_df["timestamp"]
     idx = np.where((ts >= window_start) & (ts <= window_end))[0]
-    idx = idx[(idx >= HISTORY - 1) & (idx + HORIZON < len(zone_df))][::stride]
+    idx = idx[(idx >= HISTORY - 1) & (idx + horizon < len(zone_df))][::stride]
     hist_l = np.stack([loads[i - HISTORY + 1:i + 1] for i in idx])
     hist_w = np.stack([weather[i - HISTORY + 1:i + 1] for i in idx])
-    actual = np.stack([loads[i + 1:i + 1 + HORIZON] for i in idx])
-    seasonal = np.stack([loads[i + 1 - 168:i + 1 - 168 + HORIZON] for i in idx])
+    actual = np.stack([loads[i + 1:i + 1 + horizon] for i in idx])
+    seasonal = np.stack([loads[i + 1 - 168:i + 1 - 168 + horizon] for i in idx])
     return hist_l, hist_w, pd.DatetimeIndex(ts.iloc[idx]), actual, seasonal
 
 
-def run_window(model, df, start, end, stride):
-    parts = [build_origins(g, start, end, stride) for _, g in df.groupby("zone")]
+def run_window(model, df, start, end, stride, horizon: int = HORIZON):
+    parts = [build_origins(g, start, end, stride, horizon) for _, g in df.groupby("zone")]
     hist_l, hist_w, last_ts, actual, seasonal = (
         np.concatenate([p[k] for p in parts]) if k != 2
         else pd.DatetimeIndex(np.concatenate([p[2].to_numpy() for p in parts]))
         for k in range(5)
     )
-    preds = recursive_forecast_batch(model, hist_l, hist_w, last_ts, HORIZON, FEATURE_COLS)
+    preds = recursive_forecast_batch(model, hist_l, hist_w, last_ts, horizon, FEATURE_COLS)
     return preds, actual, seasonal
 
 

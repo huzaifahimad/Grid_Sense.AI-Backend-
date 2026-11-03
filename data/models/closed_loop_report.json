@@ -1,0 +1,622 @@
+{
+  "method": "closed-loop replay of the held-out test window through the serving path: recursive LightGBM forecast + split-conformal band + risk classifier + decision_rules alarm/shed thresholds, scored against realized load",
+  "generated_at": "2026-11-03T16:53:21.877783+00:00",
+  "runtime_seconds": 14.9,
+  "window": {
+    "test_start": "2026-04-14T20:00:00+00:00",
+    "test_end": "2026-09-06T10:00:00+00:00",
+    "hours": 3471,
+    "zones": [
+      "ES",
+      "GR",
+      "IT_SOUTH"
+    ],
+    "rows_scored": 10413,
+    "forecast_origins_replayed": 10341,
+    "forecast_horizon_hours": 24,
+    "origin_stride_hours": 1,
+    "alarm_threshold": 0.6,
+    "hourly_gaps_per_zone": {
+      "ES": 0,
+      "GR": 0,
+      "IT_SOUTH": 0
+    },
+    "overload_definition": "load_mw > 0.9 * capacity_mw (capacity is a per-zone p99-of-load proxy, not rated capacity)"
+  },
+  "artifacts": {
+    "forecast_model": "C:\\Users\\HP\\OneDrive\\Documents\\grid sense ai for hackathon\\gridsense-backend\\data\\models\\lightgbm_load_forecast.joblib",
+    "risk_model": "C:\\Users\\HP\\OneDrive\\Documents\\grid sense ai for hackathon\\gridsense-backend\\data\\models\\risk_classifier.joblib",
+    "intervals": "C:\\Users\\HP\\OneDrive\\Documents\\grid sense ai for hackathon\\gridsense-backend\\data\\models\\forecast_intervals.json",
+    "models_overridden_for_this_run": false
+  },
+  "limitations": [
+    "Future weather is persistence (same hour on the most recent observed day), not a real NWP feed, so error during weather events is understated.",
+    "capacity_mw is a p99-of-load proxy: 'overload' means unusually high for this zone, not a verified thermal emergency. Absolute risk values inherit that.",
+    "The live /risk endpoint scores one historical snapshot matched to the current weekday+hour; this replay scores every hour in sequence, so it measures the model, not the snapshot-selection rule.",
+    "Labels derive from the same load series the models consume, so a sensor outage or curtailment that suppressed measured load would read as 'no overload'.",
+    "Overload onsets cluster at each zone's daily peak hour, so a long 'lead time' can come from reproducing the climatological peak shape rather than new information. Read it with the h+6 warning-rule precision gate, which scores the rule over all origins \u2014 including the hours where it cries wolf."
+  ],
+  "metrics": {
+    "forecast": {
+      "origins": 10341,
+      "per_step": {
+        "1": {
+          "mape_recursive": 2.244,
+          "mape_seasonal_naive": 5.207,
+          "mape_improvement": 0.569,
+          "coverage_p10_p90": 0.814,
+          "bias_pct": 0.082
+        },
+        "6": {
+          "mape_recursive": 4.171,
+          "mape_seasonal_naive": 5.198,
+          "mape_improvement": 0.1976,
+          "coverage_p10_p90": 0.8578,
+          "bias_pct": 0.292
+        },
+        "12": {
+          "mape_recursive": 4.336,
+          "mape_seasonal_naive": 5.196,
+          "mape_improvement": 0.1656,
+          "coverage_p10_p90": 0.8533,
+          "bias_pct": 0.278
+        },
+        "24": {
+          "mape_recursive": 4.363,
+          "mape_seasonal_naive": 5.2,
+          "mape_improvement": 0.1609,
+          "coverage_p10_p90": 0.8487,
+          "bias_pct": 0.258
+        }
+      },
+      "coverage_p10_p90_overall": 0.8426,
+      "weekly_coverage": [
+        {
+          "week_start": "2026-04-13",
+          "origins": 372,
+          "coverage": 0.7687
+        },
+        {
+          "week_start": "2026-04-20",
+          "origins": 504,
+          "coverage": 0.7946
+        },
+        {
+          "week_start": "2026-04-27",
+          "origins": 504,
+          "coverage": 0.8544
+        },
+        {
+          "week_start": "2026-05-04",
+          "origins": 504,
+          "coverage": 0.7764
+        },
+        {
+          "week_start": "2026-05-11",
+          "origins": 504,
+          "coverage": 0.8062
+        },
+        {
+          "week_start": "2026-05-18",
+          "origins": 504,
+          "coverage": 0.8208
+        },
+        {
+          "week_start": "2026-05-25",
+          "origins": 504,
+          "coverage": 0.8009
+        },
+        {
+          "week_start": "2026-06-01",
+          "origins": 504,
+          "coverage": 0.8298
+        },
+        {
+          "week_start": "2026-06-08",
+          "origins": 504,
+          "coverage": 0.836
+        },
+        {
+          "week_start": "2026-06-15",
+          "origins": 504,
+          "coverage": 0.8453
+        },
+        {
+          "week_start": "2026-06-22",
+          "origins": 504,
+          "coverage": 0.7988
+        },
+        {
+          "week_start": "2026-06-29",
+          "origins": 504,
+          "coverage": 0.8604
+        },
+        {
+          "week_start": "2026-07-06",
+          "origins": 504,
+          "coverage": 0.8316
+        },
+        {
+          "week_start": "2026-07-13",
+          "origins": 504,
+          "coverage": 0.8966
+        },
+        {
+          "week_start": "2026-07-20",
+          "origins": 504,
+          "coverage": 0.8934
+        },
+        {
+          "week_start": "2026-07-27",
+          "origins": 504,
+          "coverage": 0.9104
+        },
+        {
+          "week_start": "2026-08-03",
+          "origins": 504,
+          "coverage": 0.8707
+        },
+        {
+          "week_start": "2026-08-10",
+          "origins": 504,
+          "coverage": 0.9013
+        },
+        {
+          "week_start": "2026-08-17",
+          "origins": 504,
+          "coverage": 0.8613
+        },
+        {
+          "week_start": "2026-08-24",
+          "origins": 504,
+          "coverage": 0.8589
+        },
+        {
+          "week_start": "2026-08-31",
+          "origins": 393,
+          "coverage": 0.8637
+        }
+      ],
+      "weekly_coverage_spread": 0.1417,
+      "warning_rule_at_lead": {
+        "1": {
+          "alerts": 1087,
+          "true_alerts": 998,
+          "missed_overload_hours": 126,
+          "precision": 0.9181,
+          "recall": 0.8879,
+          "alerts_per_zone_day": 2.523,
+          "f1": 0.9028
+        },
+        "6": {
+          "alerts": 1042,
+          "true_alerts": 874,
+          "missed_overload_hours": 255,
+          "precision": 0.8388,
+          "recall": 0.7741,
+          "alerts_per_zone_day": 2.418,
+          "f1": 0.8052
+        },
+        "12": {
+          "alerts": 1047,
+          "true_alerts": 873,
+          "missed_overload_hours": 258,
+          "precision": 0.8338,
+          "recall": 0.7719,
+          "alerts_per_zone_day": 2.43,
+          "f1": 0.8017
+        },
+        "24": {
+          "alerts": 1062,
+          "true_alerts": 883,
+          "missed_overload_hours": 257,
+          "precision": 0.8315,
+          "recall": 0.7746,
+          "alerts_per_zone_day": 2.465,
+          "f1": 0.802
+        }
+      },
+      "warning_rule_at_lead_upper_band": {
+        "1": {
+          "alerts": 1643,
+          "true_alerts": 1121,
+          "missed_overload_hours": 3,
+          "precision": 0.6823,
+          "recall": 0.9973,
+          "alerts_per_zone_day": 3.813,
+          "f1": 0.8103
+        },
+        "6": {
+          "alerts": 2223,
+          "true_alerts": 1122,
+          "missed_overload_hours": 7,
+          "precision": 0.5047,
+          "recall": 0.9938,
+          "alerts_per_zone_day": 5.159,
+          "f1": 0.6695
+        },
+        "12": {
+          "alerts": 2264,
+          "true_alerts": 1124,
+          "missed_overload_hours": 7,
+          "precision": 0.4965,
+          "recall": 0.9938,
+          "alerts_per_zone_day": 5.254,
+          "f1": 0.6622
+        },
+        "24": {
+          "alerts": 2294,
+          "true_alerts": 1134,
+          "missed_overload_hours": 6,
+          "precision": 0.4943,
+          "recall": 0.9947,
+          "alerts_per_zone_day": 5.324,
+          "f1": 0.6605
+        }
+      }
+    },
+    "alarm": {
+      "hours_scored": 10413,
+      "threshold": 0.6,
+      "positive_rate": 0.1095,
+      "precision": 0.8768,
+      "recall": 0.9053,
+      "f1": 0.8908,
+      "true_positive_hours": 1032,
+      "false_alarm_hours": 145,
+      "missed_hours": 108,
+      "alarm_hours": 1177,
+      "false_alarms_per_zone_day": 0.334,
+      "brier": 0.01851,
+      "brier_base_rate": 0.09749,
+      "brier_skill": 0.8102,
+      "critical_hours": 1033,
+      "shed_hours_priority_1": 1033,
+      "shed_hours_priority_2": 144,
+      "reliability": [
+        {
+          "bucket": "low",
+          "n": 9048,
+          "mean_predicted": 0.0069,
+          "observed_overload_rate": 0.0049
+        },
+        {
+          "bucket": "moderate",
+          "n": 188,
+          "mean_predicted": 0.4477,
+          "observed_overload_rate": 0.3404
+        },
+        {
+          "bucket": "elevated",
+          "n": 144,
+          "mean_predicted": 0.7078,
+          "observed_overload_rate": 0.5625
+        },
+        {
+          "bucket": "critical",
+          "n": 1033,
+          "mean_predicted": 0.9685,
+          "observed_overload_rate": 0.9206
+        }
+      ],
+      "per_zone": {
+        "ES": {
+          "hours": 3471,
+          "positive_rate": 0.051,
+          "precision": 0.8218,
+          "recall": 0.9379,
+          "mean_score": 0.0643,
+          "alarm_hours": 202
+        },
+        "GR": {
+          "hours": 3471,
+          "positive_rate": 0.0078,
+          "precision": 0.7,
+          "recall": 0.7778,
+          "mean_score": 0.0108,
+          "alarm_hours": 30
+        },
+        "IT_SOUTH": {
+          "hours": 3471,
+          "positive_rate": 0.2697,
+          "precision": 0.8942,
+          "recall": 0.9028,
+          "mean_score": 0.2848,
+          "alarm_hours": 945
+        }
+      }
+    },
+    "events": {
+      "n_events": 206,
+      "n_detected": 188,
+      "detection_recall": 0.9126,
+      "median_lead_hours_stable": 3.0,
+      "median_lead_hours_glimpse": 24.0,
+      "share_warned_1h": 0.6019,
+      "share_warned_3h": 0.5194,
+      "share_warned_6h": 0.4563,
+      "median_stable_lead_upper_band": 24.0,
+      "share_stable_3h_upper_band": 0.9563,
+      "top_onset_hours": [
+        {
+          "hour_utc": 5,
+          "n_events": 47
+        },
+        {
+          "hour_utc": 8,
+          "n_events": 26
+        },
+        {
+          "hour_utc": 6,
+          "n_events": 25
+        },
+        {
+          "hour_utc": 4,
+          "n_events": 20
+        }
+      ],
+      "longest_event_hours": 16,
+      "events": [
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-05-21T07:00:00+00:00",
+          "duration_hours": 4,
+          "peak_load_mw": 4551.4,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-05-29T07:00:00+00:00",
+          "duration_hours": 2,
+          "peak_load_mw": 4481.6,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-06-01T06:00:00+00:00",
+          "duration_hours": 4,
+          "peak_load_mw": 4667.9,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-06-02T07:00:00+00:00",
+          "duration_hours": 2,
+          "peak_load_mw": 4488.3,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-06-03T07:00:00+00:00",
+          "duration_hours": 4,
+          "peak_load_mw": 4619.6,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-06-04T06:00:00+00:00",
+          "duration_hours": 3,
+          "peak_load_mw": 4649.6,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-06-05T07:00:00+00:00",
+          "duration_hours": 2,
+          "peak_load_mw": 4479.1,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-06-08T06:00:00+00:00",
+          "duration_hours": 4,
+          "peak_load_mw": 4601.6,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-06-09T06:00:00+00:00",
+          "duration_hours": 4,
+          "peak_load_mw": 4562.7,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-06-10T06:00:00+00:00",
+          "duration_hours": 3,
+          "peak_load_mw": 4586.1,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-06-11T08:00:00+00:00",
+          "duration_hours": 1,
+          "peak_load_mw": 4512.9,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "IT_SOUTH",
+          "onset": "2026-06-12T07:00:00+00:00",
+          "duration_hours": 2,
+          "peak_load_mw": 4554.1,
+          "warn_level_mw": 4429.4,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        }
+      ]
+    }
+  },
+  "gates": [
+    {
+      "id": "forecast_beats_naive_h1",
+      "family": "forecast",
+      "direction": "high",
+      "target": 0.1,
+      "floor": 0.0,
+      "label": "h+1 forecast beats seasonal-naive by >=10% MAPE",
+      "value": 0.569,
+      "result": "PASS"
+    },
+    {
+      "id": "forecast_beats_naive_h24",
+      "family": "forecast",
+      "direction": "high",
+      "target": 0.1,
+      "floor": 0.0,
+      "label": "h+24 forecast beats seasonal-naive by >=10% MAPE",
+      "value": 0.1609,
+      "result": "PASS"
+    },
+    {
+      "id": "band_coverage",
+      "family": "forecast",
+      "direction": "between",
+      "target": [
+        0.7,
+        0.95
+      ],
+      "floor": [
+        0.6,
+        0.98
+      ],
+      "label": "P10-P90 coverage within 0.70-0.95 (nominal 0.80)",
+      "value": 0.8426,
+      "result": "PASS"
+    },
+    {
+      "id": "coverage_drift",
+      "family": "forecast",
+      "direction": "low",
+      "target": 0.15,
+      "floor": 0.3,
+      "label": "weekly coverage spread <=0.15 (band not decaying across the window)",
+      "value": 0.1417,
+      "result": "PASS"
+    },
+    {
+      "id": "forecast_warning_precision_h6",
+      "family": "forecast",
+      "direction": "high",
+      "target": 0.5,
+      "floor": 0.35,
+      "label": "overload warning raised 6h ahead is >=50% correct (all origins, not just events)",
+      "value": 0.8388,
+      "result": "PASS"
+    },
+    {
+      "id": "alarm_precision",
+      "family": "alarm",
+      "direction": "high",
+      "target": 0.5,
+      "floor": 0.35,
+      "label": "alarm precision >=0.50 at score>=0.6",
+      "value": 0.8768,
+      "result": "PASS"
+    },
+    {
+      "id": "alarm_recall",
+      "family": "alarm",
+      "direction": "high",
+      "target": 0.5,
+      "floor": 0.35,
+      "label": "alarm recall >=0.50 at score>=0.6",
+      "value": 0.9053,
+      "result": "PASS"
+    },
+    {
+      "id": "brier_skill",
+      "family": "alarm",
+      "direction": "high",
+      "target": 0.15,
+      "floor": 0.05,
+      "label": "Brier skill over the base-rate forecast >=0.15",
+      "value": 0.8102,
+      "result": "PASS"
+    },
+    {
+      "id": "false_alarms_per_zone_day",
+      "family": "alarm",
+      "direction": "low",
+      "target": 5.0,
+      "floor": 10.0,
+      "label": "<=5 false alarms per zone-day (operator alert fatigue)",
+      "value": 0.334,
+      "result": "PASS"
+    },
+    {
+      "id": "event_detection",
+      "family": "event",
+      "direction": "high",
+      "target": 0.8,
+      "floor": 0.6,
+      "label": ">=80% of real overload events raise an alarm while running",
+      "value": 0.9126,
+      "result": "PASS"
+    },
+    {
+      "id": "event_warning_3h",
+      "family": "event",
+      "direction": "high",
+      "target": 0.5,
+      "floor": 0.25,
+      "label": ">=50% of events forecast-warned >=3h before onset",
+      "value": 0.5194,
+      "result": "PASS"
+    },
+    {
+      "id": "median_lead_hours",
+      "family": "event",
+      "direction": "high",
+      "target": 3.0,
+      "floor": 1.0,
+      "label": "median STABLE forecast lead before onset >=3h (unbroken warning from h+1)",
+      "value": 3.0,
+      "result": "PASS"
+    },
+    {
+      "id": "replay_coverage",
+      "family": "data",
+      "direction": "high",
+      "target": 500,
+      "floor": 100,
+      "label": ">=500 forecast origins replayed (window actually covered)",
+      "value": 10341,
+      "result": "PASS"
+    }
+  ],
+  "overall": "PASS"
+}

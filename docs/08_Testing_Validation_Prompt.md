@@ -99,7 +99,7 @@ the actual code, not by trusting the document:
 
 Give a structured report:
 
-- **Backend:** does it run locally, does it deploy, do all 5 endpoints return correct
+- **Backend:** does it run locally, does it deploy, do all 6 endpoints return correct
   real data, is the leak fix still in place, are shap/sklearn/torch still absent from
   the live serving path?
 - **Frontend:** does it build, does it connect to the real backend, does the dashboard

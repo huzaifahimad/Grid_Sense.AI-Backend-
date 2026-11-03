@@ -14,6 +14,8 @@ Endpoints (System Architecture doc Section 1):
   GET /risk/{zone}           -> overload risk score + top contributing factors
   GET /shed-schedule/{zone}  -> recommended shed schedule (rules layer, NOT a model)
   GET /assets                -> ranked list of all monitored assets by risk
+  GET /validation            -> closed-loop replay of the held-out window, with
+                                PASS/WARN/FAIL release gates
 
 Local run:
     uvicorn api.main:app --reload --port 8000
@@ -55,14 +57,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from config import MODELS_DIR, DATA_FEATURES_DIR, ENTSOE_ZONES
+from models.decision_rules import (
+    MAX_HORIZON_HOURS,
+    bucket_for_score,
+    dashboard_status,
+    shed_priority,
+)
 from models.forecasting import MIN_HISTORY_HOURS, apply_intervals, recursive_forecast
 from models.risk_classifier import FEATURE_COLS as RISK_FEATURE_COLS
 from models.train_baselines import FEATURE_COLS as FORECAST_FEATURE_COLS
 
-CRITICAL_THRESHOLD = 0.8
-ELEVATED_THRESHOLD = 0.6
-MODERATE_THRESHOLD = 0.3
-MAX_HORIZON_HOURS = 48
 # Recursive forecast needs 168h of history; the extra rows are headroom.
 ROWS_PER_ZONE_BUFFER = 240
 
@@ -72,6 +76,7 @@ _state: dict = {
     "risk_factors": None,
     "intervals": None,
     "features": None,
+    "closed_loop": None,
 }
 
 
@@ -80,6 +85,7 @@ def _load_artifacts() -> None:
     risk_path = MODELS_DIR / "risk_classifier.joblib"
     factors_path = MODELS_DIR / "risk_factors_by_bucket.json"
     intervals_path = MODELS_DIR / "forecast_intervals.json"
+    closed_loop_path = MODELS_DIR / "closed_loop_report.json"
     feat_path = DATA_FEATURES_DIR / "training_features.parquet"
 
     if lgb_path.exists():
@@ -106,6 +112,13 @@ def _load_artifacts() -> None:
     else:
         log.warning("no forecast_intervals.json — falling back to fixed ±8%% band; "
                     "run models/calibrate_forecast_intervals.py")
+
+    if closed_loop_path.exists():
+        _state["closed_loop"] = json.loads(closed_loop_path.read_text())
+        log.info("loaded closed-loop report — overall %s", _state["closed_loop"].get("overall"))
+    else:
+        log.warning("no closed_loop_report.json — /validation will 404; "
+                    "run python -m models.closed_loop_validation")
 
     if feat_path.exists():
         full_df = pd.read_parquet(feat_path)
@@ -145,26 +158,12 @@ app.add_middleware(
 )
 
 
-def _bucket_for_score(score: float) -> str:
-    if score >= CRITICAL_THRESHOLD:
-        return "critical"
-    if score >= ELEVATED_THRESHOLD:
-        return "elevated"
-    if score >= MODERATE_THRESHOLD:
-        return "moderate"
-    return "low"
-
-
-def _dashboard_status(score: float) -> str:
-    if score >= CRITICAL_THRESHOLD:
-        return "critical"
-    if score >= ELEVATED_THRESHOLD:
-        return "elevated"
-    return "normal"
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return _now_utc().isoformat()
 
 
 def _zone_frame(zone: str) -> pd.DataFrame:
@@ -259,6 +258,32 @@ class HealthResponse(BaseModel):
     interval_method: str
 
 
+class ValidationGate(BaseModel):
+    id: str
+    family: str
+    label: str
+    direction: str
+    target: float | list[float]
+    floor: float | list[float]
+    value: Optional[float]
+    result: str  # "PASS" | "WARN" | "FAIL"
+
+
+class ValidationResponse(BaseModel):
+    method: str
+    generated_at: str
+    runtime_seconds: float
+    # Deep metric blocks stay untyped so the validator can grow without
+    # breaking the API contract; the gates below are the release decision.
+    window: dict
+    artifacts: dict
+    metrics: dict
+    gates: list[ValidationGate]
+    overall: str
+    limitations: list[str]
+    staleness_hours: float
+
+
 # ------------------------------------------------------------
 # Endpoints
 
@@ -275,6 +300,8 @@ def health():
         "risk_factors": _state["risk_factors"] is not None,
         "forecast_intervals": _state["intervals"] is not None,
         "features": _state["features"] is not None,
+        # Evidence, not a serving dependency: its absence must not mark the API degraded.
+        "closed_loop_report": _state["closed_loop"] is not None,
     }
     df = _state["features"]
     required = ("forecast_model", "risk_model", "features")
@@ -287,6 +314,29 @@ def health():
         serving_window_end=df["timestamp"].max().isoformat() if df is not None else None,
         interval_method=(_state["intervals"] or {}).get("method", "fixed ±8% fallback"),
     )
+
+
+@app.get("/validation", response_model=ValidationResponse)
+def get_validation():
+    """
+    Closed-loop validation: the held-out test window replayed hour by hour through
+    this same serving path (forecast + calibrated band + risk score + shed rule)
+    and scored against what actually happened, with PASS/WARN/FAIL release gates.
+
+    Served from data/models/closed_loop_report.json as written by
+    `python -m models.closed_loop_validation` — nothing is recomputed per request,
+    and staleness_hours tells the caller how old that evidence is.
+    """
+    report = _state["closed_loop"]
+    if report is None:
+        raise HTTPException(
+            503, "No closed-loop report. Run: python -m models.closed_loop_validation")
+
+    generated = datetime.fromisoformat(report["generated_at"])
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=timezone.utc)
+    staleness_hours = round((_now_utc() - generated).total_seconds() / 3600.0, 2)
+    return ValidationResponse(**report, staleness_hours=staleness_hours)
 
 
 @app.get("/forecast/{zone}", response_model=ForecastResponse)
@@ -335,13 +385,13 @@ def get_risk(zone: str):
     risk_score = float(_state["risk_model"].predict_proba(latest_row[RISK_FEATURE_COLS])[0, 1])
 
     # Bucketed precomputed factors, not per-request SHAP — see risk_classifier.py.
-    factors = (_state["risk_factors"] or {}).get(_bucket_for_score(risk_score), [])
+    factors = (_state["risk_factors"] or {}).get(bucket_for_score(risk_score), [])
 
     return RiskResponse(
         zone=zone,
         asset_id=f"{zone}-FEEDER-01",
         risk_score=risk_score,
-        status=_dashboard_status(risk_score),
+        status=dashboard_status(risk_score),
         snapshot_timestamp=latest_row["timestamp"].iloc[0].isoformat(),
         predicted_load_mw=float(latest_row["load_mw"].iloc[0]),
         capacity_mw=float(latest_row["capacity_mw"].iloc[0]),
@@ -368,7 +418,7 @@ def list_assets():
                 asset_id=f"{zone}-FEEDER-01",
                 zone=zone,
                 risk_score=score,
-                status=_dashboard_status(score),
+                status=dashboard_status(score),
             )
         )
 
@@ -389,7 +439,8 @@ def get_shed_schedule(zone: str):
     CRITICAL_ASSETS = {"HOSPITAL", "WATER_PUMP"}
     if any(tag in risk.asset_id for tag in CRITICAL_ASSETS):
         return []
-    if risk.risk_score < ELEVATED_THRESHOLD:
+    priority = shed_priority(risk.risk_score)
+    if priority is None:
         return []
 
     margin = risk.capacity_mw - risk.predicted_load_mw
@@ -403,7 +454,7 @@ def get_shed_schedule(zone: str):
         ShedRecommendation(
             zone=zone,
             asset_id=risk.asset_id,
-            priority=1 if risk.risk_score >= CRITICAL_THRESHOLD else 2,
+            priority=priority,
             reasoning=reasoning,
             predicted_margin_mw=margin,
         )
