@@ -6,6 +6,8 @@ models/train_lstm_cnn.py
 requirements.txt
 requirements-vercel.txt
 render.yaml
+tests/
+.github/
 *.csv
 __pycache__/
 *.pyc
@@ -14,4 +16,5 @@ __pycache__/
 # broader .gitignore rule above would otherwise exclude these
 !data/models/*.joblib
 !data/models/risk_factors_by_bucket.json
+!data/models/forecast_intervals.json
 !data/features/training_features.parquet

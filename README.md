@@ -17,12 +17,15 @@ GridSense AI predicts electricity grid overload **before it happens**. It ingest
 grid load data (ENTSO-E Transparency Platform) and weather data (NASA POWER), engineers
 leak-free time-series features, and serves two trained models through a REST API:
 
-- **Load Forecaster** (LightGBM regressor) — hourly demand forecast. The API still
-  returns p10/p50/p90 fields; **p10/p90 are a fixed ±8% band around the LightGBM
-  point forecast**, not learned quantile estimates. On the current synthetic pipeline run,
-  MAPE is **2.23%** vs. **6.59%** persistence baseline.
+- **Load Forecaster** (LightGBM regressor) — recursive 1–48h-ahead demand forecast from
+  the latest observation. P10/P90 are **split-conformal intervals** calibrated per horizon
+  on a held-out validation window (test coverage **84.8%** vs. 80% nominal). Honest test
+  MAPE: **2.24%** at 1h ahead, **~4.3%** at 6–48h ahead vs. **~5.1%** seasonal-naive and
+  **6.59%** persistence. Future weather uses persistence (same hour, previous day) until
+  an NWP feed is connected.
 - **Overload Risk Classifier** (LightGBM classifier) — per-zone risk score with
-  precomputed SHAP explanations. Current synthetic-run PR-AUC **0.9595**.
+  precomputed SHAP explanations. Test PR-AUC **0.9637**, Brier **0.0185** (base rate
+  0.0975). Early stopping uses a validation slice, never the test set.
 - **Load-Shedding Recommender** (rules-based) — priority-ranked shedding schedule with
   human-readable reasoning. The system *recommends*; it never controls anything.
 
@@ -35,6 +38,9 @@ architecture designed to retrain on Pakistani NTDC/DISCO grid data once access i
 > real-data ingestion code is complete — see
 > [`docs/04_Pipeline_Documentation.md`](docs/04_Pipeline_Documentation.md) before citing
 > any accuracy number.
+
+**Tests:** `python -m pytest tests -q` — 28 tests covering endpoint contracts, train/serve
+feature parity, label-leak guard, interval calibration and the lean serving import path.
 
 ---
 
@@ -65,11 +71,12 @@ keep the deployed footprint lean.
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/` | GET | Health check — service status and configured zones |
-| `/forecast/{zone}?horizon_hours=24` | GET | Load forecast; p50 is LightGBM, p10/p90 are a fixed ±8% band |
+| `/` | GET | Liveness — service status and configured zones |
+| `/health` | GET | Readiness — per-artifact load state, serving data window, interval method |
+| `/forecast/{zone}?horizon_hours=24` | GET | Recursive forecast (1–48h) with calibrated P10/P50/P90, origin timestamp and step |
 | `/risk/{zone}` | GET | Overload risk score, bucket, top SHAP factors, load vs. capacity |
 | `/assets` | GET | Risk-ranked list of all monitored assets across zones |
-| `/shed-schedule/{zone}` | GET | Recommended load-shedding priorities with reasoning |
+| `/shed-schedule/{zone}` | GET | Advisory shedding recommendation for elevated/critical zones only (priority 1 = critical ≥0.8, 2 = elevated ≥0.6) |
 
 Example:
 

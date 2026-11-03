@@ -49,6 +49,22 @@ def walk_forward_split(df: pd.DataFrame, test_frac: float = 0.2):
     return train, test
 
 
+def train_val_test_split(df: pd.DataFrame, test_frac: float = 0.2, val_frac: float = 0.1):
+    """
+    Time-ordered three-way split. Early stopping uses `val` (the tail of the
+    training window); `test` is scored exactly once. Early-stopping on the
+    test set would select the iteration count on the very data used to report
+    accuracy and bias the reported metrics optimistically.
+    """
+    train_full, test = walk_forward_split(df, test_frac)
+    train_full = train_full.sort_values("timestamp")
+    val_cut = train_full.iloc[int(len(train_full) * (1 - val_frac))]["timestamp"]
+    fit = train_full[train_full["timestamp"] < val_cut]
+    val = train_full[train_full["timestamp"] >= val_cut]
+    print(f"[baselines] fit: {len(fit)} rows, val: {len(val)} rows (>= {val_cut})")
+    return fit, val, test
+
+
 def evaluate(y_true, y_pred, label: str) -> dict:
     mape = mean_absolute_percentage_error(y_true, y_pred) * 100
     mae = mean_absolute_error(y_true, y_pred)
@@ -69,8 +85,9 @@ def seasonal_naive_baseline(test: pd.DataFrame) -> dict:
     return evaluate(valid[TARGET_COL], valid["load_lag_168h"], "Seasonal-naive (t-168h)")
 
 
-def lightgbm_baseline(train: pd.DataFrame, test: pd.DataFrame) -> dict:
+def lightgbm_baseline(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame) -> dict:
     train_valid = train.dropna(subset=FEATURE_COLS + [TARGET_COL])
+    val_valid = val.dropna(subset=FEATURE_COLS + [TARGET_COL])
     test_valid = test.dropna(subset=FEATURE_COLS + [TARGET_COL])
 
     model = lgb.LGBMRegressor(
@@ -85,9 +102,10 @@ def lightgbm_baseline(train: pd.DataFrame, test: pd.DataFrame) -> dict:
     )
     model.fit(
         train_valid[FEATURE_COLS], train_valid[TARGET_COL],
-        eval_set=[(test_valid[FEATURE_COLS], test_valid[TARGET_COL])],
+        eval_set=[(val_valid[FEATURE_COLS], val_valid[TARGET_COL])],
         callbacks=[lgb.early_stopping(30, verbose=False)],
     )
+    print(f"[baselines] LightGBM best_iteration={model.best_iteration_} (selected on val, not test)")
 
     preds = model.predict(test_valid[FEATURE_COLS])
     result = evaluate(test_valid[TARGET_COL], preds, "LightGBM")
@@ -105,13 +123,13 @@ def run_all():
         raise FileNotFoundError(f"{feat_path} not found. Run features/build_features.py first.")
 
     df = pd.read_parquet(feat_path)
-    train, test = walk_forward_split(df)
+    fit, val, test = train_val_test_split(df)
 
     print("\n=== Baseline Comparison (this table goes straight into your model card) ===")
     results = [
         persistence_baseline(test),
         seasonal_naive_baseline(test),
-        lightgbm_baseline(train, test),
+        lightgbm_baseline(fit, val, test),
     ]
 
     results_df = pd.DataFrame(results)
