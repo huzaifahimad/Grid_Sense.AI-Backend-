@@ -26,6 +26,12 @@ data/raw/*.parquet
 # Kaggle credentials if ever placed in-repo by mistake
 kaggle.json
 
+# Local audit scratch — pull logs, the pre-migration synthetic dataset kept as a
+# rollback copy, and one-off probe scripts. None of it belongs in a commit.
+_audit_out/
+_synthetic_backup/
+_audit_*.py
+
 # OS
 .DS_Store
 Thumbs.db

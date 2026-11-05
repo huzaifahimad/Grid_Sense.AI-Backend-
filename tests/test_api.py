@@ -16,6 +16,42 @@ def test_health_ready(client):
     assert "conformal" in body["interval_method"]
 
 
+def test_health_declares_real_data_provenance(client):
+    """The API must state where its numbers come from — a stand-in dataset must not
+    be servable silently as if it were a real pull."""
+    health = client.get("/health").json()
+    prov = health["data_provenance"]
+    assert set(prov) == {
+        "load",
+        "weather",
+        "capacity",
+        "load_latest_timestamp",
+        "weather_latest_timestamp",
+        "weather_lag_hours",
+        "is_synthetic",
+    }
+    assert list(prov["load"]) == ["entsoe"], prov["load"]
+    assert set(prov["weather"]) <= {"nasa_power", "unavailable"}, prov["weather"]
+    assert "nasa_power" in prov["weather"], prov["weather"]
+    assert prov["capacity"] == "p99-of-load proxy"
+    assert prov["is_synthetic"] is False
+
+
+def test_health_declares_per_feed_currency(client):
+    """Reanalysis weather lags real-time load by days, so the two feeds must report
+    separate horizons — a single 'last updated' would misstate what the models saw."""
+    health = client.get("/health").json()
+    prov = health["data_provenance"]
+    import pandas as pd
+
+    load_latest = pd.Timestamp(prov["load_latest_timestamp"])
+    assert load_latest == pd.Timestamp(health["serving_window_end"])
+    weather_latest = pd.Timestamp(prov["weather_latest_timestamp"])
+    assert weather_latest <= load_latest
+    expected_lag = (load_latest - weather_latest).total_seconds() / 3600
+    assert prov["weather_lag_hours"] == round(expected_lag, 1)
+
+
 def test_root(client):
     assert client.get("/").json()["status"] == "ok"
 
@@ -127,3 +163,81 @@ def test_serving_path_does_not_import_training_only_deps():
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "", f"serving path imported: {out.stdout.strip()}"
+
+
+def _stub_state(blind_tail_hours: int):
+    """Serving state for a zone whose newest hours have load but no published weather."""
+    import numpy as np
+    import pandas as pd
+    from models.forecasting import WEATHER_COLS
+
+    ts = pd.date_range("2026-01-01", periods=200, freq="h", tz="UTC")
+    df = pd.DataFrame({"timestamp": ts, "zone": "ES", "load_mw": 1000.0 + np.arange(len(ts))})
+    for col in WEATHER_COLS:
+        df[col] = 20.0
+    if blind_tail_hours:
+        df.loc[df["timestamp"] >= ts[-blind_tail_hours], list(WEATHER_COLS)] = np.nan
+
+    class _Stub:
+        def __init__(self, value):
+            self._value = value
+
+        def predict(self, X):
+            return np.full(len(X), float(self._value))
+
+    bands = lambda tag: {  # noqa: E731 - tiny local helper for two near-identical artifacts
+        "method": f"{tag} bands",
+        "horizons": {str(h): {"q10": -0.05, "q90": 0.05} for h in range(1, 49)},
+    }
+    return df, _Stub(1500.0), _Stub(1700.0), bands("weather-aware"), bands("fallback")
+
+
+def test_forecast_answers_from_the_no_weather_model_when_weather_is_not_published_yet(monkeypatch):
+    """
+    NASA publishes an hour roughly two days late while ENTSO-E publishes load far
+    sooner. Waiting for weather would strand the forecast origin in the past, so the
+    reduced model answers from the newest load hour — but only with its own bands, and
+    the weather-aware model must never be fed the NaN tail.
+    """
+    from api import main as api_main
+
+    df, full_model, fb_model, full_bands, fb_bands = _stub_state(blind_tail_hours=40)
+    saved = dict(api_main._state)
+    try:
+        api_main._state.update({
+            "features": df, "forecast_model": full_model, "fallback_model": fb_model,
+            "intervals": full_bands, "fallback_intervals": fb_bands,
+        })
+        served = api_main.get_forecast("ES", 24)
+        assert served.served_by == "no_weather_fallback"
+        assert pd.Timestamp(served.origin_timestamp) == df["timestamp"].iloc[-1]
+        assert served.interval_method == "fallback bands"
+        assert served.origin_age_hours > 0
+    finally:
+        api_main._state.clear()
+        api_main._state.update(saved)
+
+
+def test_forecast_keeps_the_weather_aware_model_when_the_tail_is_not_worth_it(monkeypatch):
+    """A two-hour gain does not justify trading measured accuracy for freshness."""
+    from api import main as api_main
+
+    df, full_model, fb_model, full_bands, fb_bands = _stub_state(blind_tail_hours=2)
+    saved = dict(api_main._state)
+    try:
+        api_main._state.update({
+            "features": df, "forecast_model": full_model, "fallback_model": fb_model,
+            "intervals": full_bands, "fallback_intervals": fb_bands,
+        })
+        served = api_main.get_forecast("ES", 24)
+        assert served.served_by == "weather_aware"
+        assert served.interval_method == "weather-aware bands"
+        assert pd.Timestamp(served.origin_timestamp) == df["timestamp"].iloc[-3]
+
+        # With no fallback artifacts loaded the behaviour must be exactly what it was
+        # before the fallback existed, bands and all.
+        api_main._state["fallback_model"] = None
+        assert api_main.get_forecast("ES", 24).served_by == "weather_aware"
+    finally:
+        api_main._state.clear()
+        api_main._state.update(saved)

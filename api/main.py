@@ -63,18 +63,31 @@ from models.decision_rules import (
     dashboard_status,
     shed_priority,
 )
-from models.forecasting import MIN_HISTORY_HOURS, apply_intervals, recursive_forecast
+from models.forecasting import (
+    MIN_HISTORY_HOURS, WEATHER_COLS, apply_intervals, recursive_forecast,
+)
 from models.risk_classifier import FEATURE_COLS as RISK_FEATURE_COLS
-from models.train_baselines import FEATURE_COLS as FORECAST_FEATURE_COLS
+from models.train_baselines import (
+    FEATURE_COLS as FORECAST_FEATURE_COLS,
+    FEATURE_COLS_NO_WEATHER as FALLBACK_FEATURE_COLS,
+)
 
-# Recursive forecast needs 168h of history; the extra rows are headroom.
-ROWS_PER_ZONE_BUFFER = 240
+# Recursive forecast needs 168h of history; the extra rows are headroom. Kept at 14
+# days because the newest hours per zone can be load-only (weather not yet published),
+# and the weather-aware path still needs a full 168h run behind that tail.
+ROWS_PER_ZONE_BUFFER = 336
+
+# Only answer from the load-only tail when it is meaningfully newer; below this the
+# weather-aware model is served instead of trading accuracy for a few spare hours.
+FALLBACK_MIN_GAIN_HOURS = 6
 
 _state: dict = {
     "forecast_model": None,
+    "fallback_model": None,
     "risk_model": None,
     "risk_factors": None,
     "intervals": None,
+    "fallback_intervals": None,
     "features": None,
     "closed_loop": None,
 }
@@ -94,6 +107,14 @@ def _load_artifacts() -> None:
     else:
         log.warning("no forecast model found — run models/train_baselines.py first")
 
+    fallback_path = MODELS_DIR / "lightgbm_load_forecast_no_weather.joblib"
+    if fallback_path.exists():
+        _state["fallback_model"] = joblib.load(fallback_path)
+        log.info("loaded no-weather fallback forecaster")
+    else:
+        log.info("no fallback forecaster — /forecast will wait for published weather "
+                 "instead of answering from the newest load hour")
+
     if risk_path.exists():
         _state["risk_model"] = joblib.load(risk_path)
         log.info("loaded risk classifier")
@@ -112,6 +133,17 @@ def _load_artifacts() -> None:
     else:
         log.warning("no forecast_intervals.json — falling back to fixed ±8%% band; "
                     "run models/calibrate_forecast_intervals.py")
+
+    fallback_intervals_path = MODELS_DIR / "forecast_intervals_no_weather.json"
+    if fallback_intervals_path.exists():
+        _state["fallback_intervals"] = json.loads(fallback_intervals_path.read_text())
+        log.info("loaded fallback forecast intervals (%s)",
+                 _state["fallback_intervals"].get("method"))
+    elif _state["fallback_model"] is not None:
+        # A reduced model scored under the weather-aware model's quantiles would publish
+        # coverage it never earned, so the model is dropped along with its missing bands.
+        _state["fallback_model"] = None
+        log.warning("fallback model present but uncalibrated — not serving it")
 
     if closed_loop_path.exists():
         _state["closed_loop"] = json.loads(closed_loop_path.read_text())
@@ -233,6 +265,13 @@ class ForecastResponse(BaseModel):
     horizon_hours: int
     interval_method: str
     weather_assumption: str
+    # Which of the two forecasters answered. The fallback exists because NASA POWER
+    # publishes weather roughly two days after the hour, while ENTSO-E publishes load
+    # far sooner; forecasting from those load hours needs a model with no weather input.
+    served_by: str = "weather_aware"
+    # Measured, not asserted: origin_timestamp alone makes a caller do the subtraction
+    # it is supposed to be warned by.
+    origin_age_hours: float = 0.0
     points: list[ForecastPoint]
 
 
@@ -280,6 +319,10 @@ class HealthResponse(BaseModel):
     serving_window_start: Optional[str]
     serving_window_end: Optional[str]
     interval_method: str
+    # Where the served numbers actually come from. The synthetic bootstrap and
+    # the real ingestion write the same file names, so this is the only field
+    # that lets a reader tell them apart without opening the parquet.
+    data_provenance: dict
 
 
 class ValidationGate(BaseModel):
@@ -329,6 +372,54 @@ def health():
     }
     df = _state["features"]
     required = ("forecast_model", "risk_model", "features")
+
+    provenance: dict = {}
+    if df is not None:
+        def _counts(col: str) -> dict:
+            # A frame built before provenance columns existed must not read as
+            # though it had been verified as real.
+            if col not in df.columns:
+                return {"unstamped": int(len(df))}
+            return {str(k): int(v) for k, v in df[col].value_counts().items()}
+
+        load_src, weather_src = _counts("load_source"), _counts("weather_source")
+        if "capacity_is_proxy" in df.columns:
+            # A frame with even one proxy row must not report itself as rated.
+            capacity_basis = (
+                "p99-of-load proxy" if bool(df["capacity_is_proxy"].any()) else "rated"
+            )
+        else:
+            capacity_basis = "unknown"
+
+        # Currency per feed: the newest hour each input genuinely covers. Load
+        # from ENTSO-E lands ~24h late and NASA POWER reanalysis lags further,
+        # so these two can differ by days — which is what decides whether the
+        # weather-aware forecaster can serve at all.
+        load_latest = df["timestamp"].max()
+        weather_latest = None
+        if "temperature_c" in df.columns:
+            weather_rows = df.loc[df["temperature_c"].notna(), "timestamp"]
+            weather_latest = weather_rows.max() if len(weather_rows) else None
+        lag_h = (
+            round((load_latest - weather_latest).total_seconds() / 3600, 1)
+            if weather_latest is not None
+            else None
+        )
+
+        provenance = {
+            "load": load_src,
+            "weather": weather_src,
+            "capacity": capacity_basis,
+            "load_latest_timestamp": load_latest.isoformat(),
+            "weather_latest_timestamp": (
+                weather_latest.isoformat() if weather_latest is not None else None
+            ),
+            "weather_lag_hours": lag_h,
+            "is_synthetic": any(
+                "synthetic" in s for group in (load_src, weather_src) for s in group
+            ),
+        }
+
     return HealthResponse(
         status="ok" if all(artifacts[k] for k in required) else "degraded",
         generated_at=_utc_now_iso(),
@@ -337,6 +428,7 @@ def health():
         serving_window_start=df["timestamp"].min().isoformat() if df is not None else None,
         serving_window_end=df["timestamp"].max().isoformat() if df is not None else None,
         interval_method=(_state["intervals"] or {}).get("method", "fixed ±8% fallback"),
+        data_provenance=provenance,
     )
 
 
@@ -368,11 +460,34 @@ def get_forecast(zone: str, horizon_hours: int = Query(default=24, ge=1, le=MAX_
     if _state["features"] is None or _state["forecast_model"] is None:
         raise HTTPException(503, "Models not loaded. Train models first — see README.")
 
-    history = _contiguous_hourly_tail(
-        _zone_frame(zone)[
-            ["timestamp", "load_mw", "temperature_c", "humidity_pct", "wind_speed_ms"]
-        ].dropna()
+    zone_df = _zone_frame(zone)
+    weather_history = _contiguous_hourly_tail(
+        zone_df[["timestamp", "load_mw", *WEATHER_COLS]].dropna()
     )
+    load_history = _contiguous_hourly_tail(zone_df[["timestamp", "load_mw"]].dropna())
+
+    # Serve the fallback only when it genuinely answers sooner, and only with its own
+    # bands. Weather-blind load hours otherwise cost the operator a day and a half of
+    # foresight, while the weather-aware model fed those NaNs would be guessing.
+    gain_h = 0.0
+    if len(load_history) >= MIN_HISTORY_HOURS and len(weather_history) >= 2:
+        gain_h = float((load_history["timestamp"].iloc[-1]
+                        - weather_history["timestamp"].iloc[-1]).total_seconds() // 3600)
+    use_fallback = (
+        _state["fallback_model"] is not None
+        and _state["fallback_intervals"] is not None
+        and gain_h >= FALLBACK_MIN_GAIN_HOURS
+    )
+
+    if use_fallback:
+        history, model = load_history, _state["fallback_model"]
+        feature_cols, intervals = FALLBACK_FEATURE_COLS, _state["fallback_intervals"]
+        served_by = "no_weather_fallback"
+    else:
+        history, model = weather_history, _state["forecast_model"]
+        feature_cols, intervals = FORECAST_FEATURE_COLS, _state["intervals"]
+        served_by = "weather_aware"
+
     if len(history) < MIN_HISTORY_HOURS:
         raise HTTPException(
             503,
@@ -380,10 +495,10 @@ def get_forecast(zone: str, horizon_hours: int = Query(default=24, ge=1, le=MAX_
             f"have {len(history)}",
         )
 
-    forecast = recursive_forecast(_state["forecast_model"], history, horizon_hours, FORECAST_FEATURE_COLS)
-    forecast = apply_intervals(forecast, _state["intervals"])
-    intervals = _state["intervals"] or {}
+    forecast = recursive_forecast(model, history, horizon_hours, feature_cols)
+    forecast = apply_intervals(forecast, intervals)
 
+    origin = history["timestamp"].iloc[-1]
     points = [
         ForecastPoint(
             timestamp=row.timestamp.isoformat(),
@@ -397,10 +512,13 @@ def get_forecast(zone: str, horizon_hours: int = Query(default=24, ge=1, le=MAX_
     return ForecastResponse(
         zone=zone,
         generated_at=_utc_now_iso(),
-        origin_timestamp=history["timestamp"].iloc[-1].isoformat(),
+        origin_timestamp=origin.isoformat(),
         horizon_hours=horizon_hours,
-        interval_method=intervals.get("method", "fixed ±8% fallback"),
-        weather_assumption=intervals.get("weather_assumption", "same hour on the most recent observed day"),
+        interval_method=intervals.get("method", "fixed ±8% fallback") if intervals else "fixed ±8% fallback",
+        weather_assumption=(intervals or {}).get(
+            "weather_assumption", "same hour on the most recent observed day"),
+        served_by=served_by,
+        origin_age_hours=round((_now_utc() - origin).total_seconds() / 3600, 2),
         points=points,
     )
 
