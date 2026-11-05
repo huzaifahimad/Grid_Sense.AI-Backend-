@@ -95,6 +95,9 @@ def generate_weather(zone: str, start: pd.Timestamp, end: pd.Timestamp, base_tem
         "wind_speed_ms": wind.round(1),
         "precip_mm": precip.round(2),
         "zone": zone,
+        # Same column the real ingestion writes, same self-identifying value:
+        # nothing generated here may be able to pose as a NASA POWER pull.
+        "source": "synthetic_bootstrap",
     })
     return df
 

@@ -56,6 +56,37 @@ def add_cyclic_time_features(df: pd.DataFrame, ts_col: str = "timestamp") -> pd.
     return df
 
 
+def reindex_hourly_grid(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    One row per UTC hour per zone, with unpublished hours present but empty.
+
+    groupby().shift(N) counts *rows*, not hours. ENTSO-E withholds some hours
+    (58 in Spain, 23 each in Greece and southern Italy over this two-year pull),
+    so without this step the row right after a hole carries load_lag_1h from the
+    hour before the hole — a 2-hour-old value labelled as 1 hour old — and every
+    lag feature is quietly wrong for the N rows that follow each gap. Making the
+    grid explicit turns those into NaN, which the existing dropna removes.
+    Cost measured on the real pull: ~0.1-0.3% of rows per zone.
+    """
+    parts = []
+    for zone, g in df.groupby("zone"):
+        g = g.sort_values("timestamp")
+        tz = str(g["timestamp"].dt.tz)
+        full = pd.date_range(g["timestamp"].min(), g["timestamp"].max(), freq="h", tz=tz)
+        n_missing = len(full) - len(g)
+        if n_missing:
+            print(f"[features] {zone}: adding {n_missing} unpublished hour(s) as empty rows "
+                  f"so lag shifts stay time-correct")
+        g = g.set_index("timestamp").reindex(full)
+        g.index.name = "timestamp"
+        g["zone"] = zone
+        for col in ("load_source", "weather_source"):
+            if col in g and g[col].notna().any():
+                g[col] = g[col].fillna(g[col].dropna().iloc[0])
+        parts.append(g.reset_index())
+    return pd.concat(parts, ignore_index=True).sort_values(["zone", "timestamp"]).reset_index(drop=True)
+
+
 def add_lag_and_rolling_features(df: pd.DataFrame, group_col: str = "zone",
                                   target_col: str = "load_mw") -> pd.DataFrame:
     df = df.sort_values([group_col, "timestamp"])
@@ -102,6 +133,18 @@ def build(load_source: str = "entsoe") -> pd.DataFrame:
 
     # Weather is keyed by a coordinate-derived zone label; load is keyed by country/zone code.
     # For the prototype these are aligned 1:1 via config.ZONE_COORDINATES / ENTSOE_ZONES keys.
+    # Both frames now carry a "source" stamp; rename before the merge so provenance survives
+    # as two explicit columns instead of collapsing into source_x/source_y.
+    for name, frame in (("load", load_df), ("weather", weather_df)):
+        if "source" not in frame.columns:
+            raise ValueError(
+                f"{name} frame has no 'source' column — an unstamped frame cannot be told "
+                f"apart from the synthetic bootstrap stand-in that writes the same file name. "
+                f"Re-run the ingestion script."
+            )
+    load_df = load_df.rename(columns={"source": "load_source"})
+    weather_df = weather_df.rename(columns={"source": "weather_source"})
+
     merged = load_df.merge(weather_df, on=["timestamp", "zone"], how="left")
 
     n_missing_weather = merged["temperature_c"].isna().sum()
@@ -109,15 +152,33 @@ def build(load_source: str = "entsoe") -> pd.DataFrame:
         print(f"[features] WARNING: {n_missing_weather} rows missing weather match — "
               f"check zone key alignment between load and weather sources")
 
+    merged = reindex_hourly_grid(merged)
     merged = add_cyclic_time_features(merged)
     merged = add_lag_and_rolling_features(merged)
     merged = add_overload_proxy_label(merged)
 
-    # Drop rows where lag features are NaN (start of each zone's series) — model can't
-    # use them anyway, and silently leaving NaNs in is how you get a training crash later
+    # Drop rows that are not usable samples at all: series warm-up, the grid
+    # placeholder rows reindex_hourly_grid adds for unpublished hours, and the rows
+    # immediately after a hole (their lag would straddle the gap).
     before = len(merged)
-    merged = merged.dropna(subset=["load_lag_168h"])
-    print(f"[features] dropped {before - len(merged)} warm-up rows (insufficient lag history)")
+    merged = merged.dropna(subset=["load_mw", "load_lag_1h", "load_lag_24h", "load_lag_168h"])
+    print(f"[features] dropped {before - len(merged)} rows (lag warm-up, unpublished hours)")
+
+    # NASA POWER publishes roughly two days behind, so the freshest hours of real
+    # ENTSO-E load arrive with no weather row. Those observations are kept: deleting
+    # them would delete real data and push the served forecast origin hours further
+    # into the past. What they must not do is feed the *weather-aware* model —
+    # LightGBM never errors on a NaN, it routes it down a learned default direction
+    # and returns a confident-looking number whose accuracy was never measured. So
+    # the rows are stamped and the serving path chooses the model whose inputs exist.
+    blind = merged["temperature_c"].isna()
+    merged.loc[blind, "weather_source"] = "unavailable"
+    if blind.any():
+        print(f"[features] {int(blind.sum())} row(s) have load but no published weather yet "
+              f"(earliest such hour {merged.loc[blind, 'timestamp'].min()}) — served by the "
+              f"no-weather fallback, never by the weather-aware model")
+    print(f"[features] last weather-complete hour {merged.loc[~blind, 'timestamp'].max()}; "
+          f"last observed load hour {merged['timestamp'].max()}")
 
     out_path = DATA_FEATURES_DIR / "training_features.parquet"
     merged.to_parquet(out_path, index=False)

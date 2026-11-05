@@ -64,7 +64,8 @@ def pull_weather(zone_name: str, lat: float, lon: float, start: str, end: str) -
 
         chunk_start = chunk_end + pd.Timedelta(days=1)
 
-    df = pd.concat(chunks)
+    df = pd.concat(chunks).sort_index()
+    df = df[~df.index.duplicated(keep="first")]
     df = df.reset_index().rename(columns={
         "index": "timestamp",
         "T2M": "temperature_c",
@@ -72,7 +73,22 @@ def pull_weather(zone_name: str, lat: float, lon: float, start: str, end: str) -
         "WS10M": "wind_speed_ms",
         "PRECTOTCORR": "precip_mm",
     })
+
+    # NASA POWER hourly point data is UTC. Verified empirically against the live
+    # API (2026-11-03, Sep 2026): the mean diurnal temperature peak lands at
+    # 14:00 for Madrid (-3.7 deg lon -> solar noon ~12:15 UTC), 12:00 for Naples
+    # (~11:00 UTC) and 13:00 for Athens (~10:25 UTC) — i.e. 1-2 h after solar
+    # noon in *UTC*. If these stamps were local civil time, all three would peak
+    # at the same local hour instead, offset by each zone's UTC+2 DST.
+    # The load frame is tz-aware UTC, and merging tz-aware against naive keys
+    # raises rather than warn, so the weather frame has to carry the same stamp.
+    df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
     df["zone"] = zone_name
+    # Provenance travels with the rows, not the filename: ingestion/
+    # synthetic_bootstrap.py writes this same file name with made-up values, so
+    # a reader cannot tell real from stand-in by looking at the path. /health
+    # surfaces this column so the deployed API states its own data source.
+    df["source"] = "nasa_power"
 
     # NASA POWER uses -999 as a missing-value sentinel — must be handled explicitly,
     # never left as a valid-looking number
