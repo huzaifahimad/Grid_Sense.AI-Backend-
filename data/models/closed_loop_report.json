@@ -1,23 +1,23 @@
 {
   "method": "closed-loop replay of the held-out test window through the serving path: recursive LightGBM forecast + split-conformal band + risk classifier + decision_rules alarm/shed thresholds, scored against realized load",
-  "generated_at": "2026-11-03T16:53:21.877783+00:00",
-  "runtime_seconds": 14.9,
+  "generated_at": "2026-11-05T15:17:40.712327+00:00",
+  "runtime_seconds": 18.9,
   "window": {
-    "test_start": "2026-04-14T20:00:00+00:00",
-    "test_end": "2026-09-06T10:00:00+00:00",
-    "hours": 3471,
+    "test_start": "2026-06-13T10:00:00+00:00",
+    "test_end": "2026-11-04T17:00:00+00:00",
+    "hours": 3464,
     "zones": [
       "ES",
       "GR",
       "IT_SOUTH"
     ],
-    "rows_scored": 10413,
-    "forecast_origins_replayed": 10341,
+    "rows_scored": 10122,
+    "forecast_origins_replayed": 10050,
     "forecast_horizon_hours": 24,
     "origin_stride_hours": 1,
     "alarm_threshold": 0.6,
     "hourly_gaps_per_zone": {
-      "ES": 0,
+      "ES": 2,
       "GR": 0,
       "IT_SOUTH": 0
     },
@@ -34,445 +34,446 @@
     "capacity_mw is a p99-of-load proxy: 'overload' means unusually high for this zone, not a verified thermal emergency. Absolute risk values inherit that.",
     "The live /risk endpoint scores one historical snapshot matched to the current weekday+hour; this replay scores every hour in sequence, so it measures the model, not the snapshot-selection rule.",
     "Labels derive from the same load series the models consume, so a sensor outage or curtailment that suppressed measured load would read as 'no overload'.",
-    "Overload onsets cluster at each zone's daily peak hour, so a long 'lead time' can come from reproducing the climatological peak shape rather than new information. Read it with the h+6 warning-rule precision gate, which scores the rule over all origins \u2014 including the hours where it cries wolf."
+    "Overload onsets cluster at each zone's daily peak hour, so a long 'lead time' can come from reproducing the climatological peak shape rather than new information. Read it with the h+6 warning-rule precision gate, which scores the rule over all origins \u2014 including the hours where it cries wolf.",
+    "The newest hour this replay can score is 22 h behind wall clock. Load arrives from ENTSO-E as it is republished, and NASA POWER only exposes an hour roughly two days after it happens; a row missing any weather input is dropped rather than fed to the model with NaNs, because LightGBM silently predicts through missing features. So the served origin is the last *fully observed* hour, not the current one. A near-real-time provider was measured as a substitute and rejected for now: it tracks NASA on temperature (r=0.92, bias +0.4 degC) but not on wind (1.8 vs 2.9 m/s, r=0.62), and splicing it into the tail would score the forecast against a feature distribution the model was never trained on."
   ],
   "metrics": {
     "forecast": {
-      "origins": 10341,
+      "origins": 10050,
       "per_step": {
         "1": {
-          "mape_recursive": 2.244,
-          "mape_seasonal_naive": 5.207,
-          "mape_improvement": 0.569,
-          "coverage_p10_p90": 0.814,
-          "bias_pct": 0.082
+          "mape_recursive": 2.116,
+          "mape_seasonal_naive": 9.267,
+          "mape_improvement": 0.7717,
+          "coverage_p10_p90": 0.7885,
+          "bias_pct": 0.169
         },
         "6": {
-          "mape_recursive": 4.171,
-          "mape_seasonal_naive": 5.198,
-          "mape_improvement": 0.1976,
-          "coverage_p10_p90": 0.8578,
-          "bias_pct": 0.292
+          "mape_recursive": 4.987,
+          "mape_seasonal_naive": 9.255,
+          "mape_improvement": 0.4611,
+          "coverage_p10_p90": 0.841,
+          "bias_pct": 0.754
         },
         "12": {
-          "mape_recursive": 4.336,
-          "mape_seasonal_naive": 5.196,
-          "mape_improvement": 0.1656,
-          "coverage_p10_p90": 0.8533,
-          "bias_pct": 0.278
+          "mape_recursive": 5.446,
+          "mape_seasonal_naive": 9.256,
+          "mape_improvement": 0.4116,
+          "coverage_p10_p90": 0.8605,
+          "bias_pct": 0.895
         },
         "24": {
-          "mape_recursive": 4.363,
-          "mape_seasonal_naive": 5.2,
-          "mape_improvement": 0.1609,
-          "coverage_p10_p90": 0.8487,
-          "bias_pct": 0.258
+          "mape_recursive": 5.706,
+          "mape_seasonal_naive": 9.266,
+          "mape_improvement": 0.3841,
+          "coverage_p10_p90": 0.8394,
+          "bias_pct": 1.04
         }
       },
-      "coverage_p10_p90_overall": 0.8426,
+      "coverage_p10_p90_overall": 0.8492,
       "weekly_coverage": [
         {
-          "week_start": "2026-04-13",
-          "origins": 372,
-          "coverage": 0.7687
-        },
-        {
-          "week_start": "2026-04-20",
-          "origins": 504,
-          "coverage": 0.7946
-        },
-        {
-          "week_start": "2026-04-27",
-          "origins": 504,
-          "coverage": 0.8544
-        },
-        {
-          "week_start": "2026-05-04",
-          "origins": 504,
-          "coverage": 0.7764
-        },
-        {
-          "week_start": "2026-05-11",
-          "origins": 504,
-          "coverage": 0.8062
-        },
-        {
-          "week_start": "2026-05-18",
-          "origins": 504,
-          "coverage": 0.8208
-        },
-        {
-          "week_start": "2026-05-25",
-          "origins": 504,
-          "coverage": 0.8009
-        },
-        {
-          "week_start": "2026-06-01",
-          "origins": 504,
-          "coverage": 0.8298
-        },
-        {
           "week_start": "2026-06-08",
-          "origins": 504,
-          "coverage": 0.836
+          "origins": 114,
+          "coverage": 0.826
         },
         {
           "week_start": "2026-06-15",
           "origins": 504,
-          "coverage": 0.8453
+          "coverage": 0.8648
         },
         {
           "week_start": "2026-06-22",
           "origins": 504,
-          "coverage": 0.7988
+          "coverage": 0.8862
         },
         {
           "week_start": "2026-06-29",
           "origins": 504,
-          "coverage": 0.8604
+          "coverage": 0.8218
         },
         {
           "week_start": "2026-07-06",
           "origins": 504,
-          "coverage": 0.8316
+          "coverage": 0.904
         },
         {
           "week_start": "2026-07-13",
           "origins": 504,
-          "coverage": 0.8966
+          "coverage": 0.9
         },
         {
           "week_start": "2026-07-20",
           "origins": 504,
-          "coverage": 0.8934
+          "coverage": 0.726
         },
         {
           "week_start": "2026-07-27",
           "origins": 504,
-          "coverage": 0.9104
+          "coverage": 0.8838
         },
         {
           "week_start": "2026-08-03",
           "origins": 504,
-          "coverage": 0.8707
+          "coverage": 0.9208
         },
         {
           "week_start": "2026-08-10",
           "origins": 504,
-          "coverage": 0.9013
+          "coverage": 0.8081
         },
         {
           "week_start": "2026-08-17",
           "origins": 504,
-          "coverage": 0.8613
+          "coverage": 0.9054
         },
         {
           "week_start": "2026-08-24",
           "origins": 504,
-          "coverage": 0.8589
+          "coverage": 0.83
         },
         {
           "week_start": "2026-08-31",
-          "origins": 393,
-          "coverage": 0.8637
+          "origins": 504,
+          "coverage": 0.8825
+        },
+        {
+          "week_start": "2026-09-07",
+          "origins": 504,
+          "coverage": 0.8237
+        },
+        {
+          "week_start": "2026-09-14",
+          "origins": 504,
+          "coverage": 0.912
+        },
+        {
+          "week_start": "2026-09-21",
+          "origins": 504,
+          "coverage": 0.8336
+        },
+        {
+          "week_start": "2026-09-28",
+          "origins": 504,
+          "coverage": 0.8029
+        },
+        {
+          "week_start": "2026-10-05",
+          "origins": 504,
+          "coverage": 0.8034
+        },
+        {
+          "week_start": "2026-10-12",
+          "origins": 504,
+          "coverage": 0.8135
+        },
+        {
+          "week_start": "2026-10-19",
+          "origins": 504,
+          "coverage": 0.8563
+        },
+        {
+          "week_start": "2026-10-26",
+          "origins": 360,
+          "coverage": 0.7946
         }
       ],
-      "weekly_coverage_spread": 0.1417,
+      "weekly_coverage_spread": 0.1948,
       "warning_rule_at_lead": {
         "1": {
-          "alerts": 1087,
-          "true_alerts": 998,
-          "missed_overload_hours": 126,
-          "precision": 0.9181,
-          "recall": 0.8879,
-          "alerts_per_zone_day": 2.523,
-          "f1": 0.9028
+          "alerts": 1264,
+          "true_alerts": 1159,
+          "missed_overload_hours": 121,
+          "precision": 0.9169,
+          "recall": 0.9055,
+          "alerts_per_zone_day": 3.019,
+          "f1": 0.9112
         },
         "6": {
-          "alerts": 1042,
-          "true_alerts": 874,
-          "missed_overload_hours": 255,
-          "precision": 0.8388,
-          "recall": 0.7741,
-          "alerts_per_zone_day": 2.418,
-          "f1": 0.8052
+          "alerts": 1331,
+          "true_alerts": 1017,
+          "missed_overload_hours": 263,
+          "precision": 0.7641,
+          "recall": 0.7945,
+          "alerts_per_zone_day": 3.179,
+          "f1": 0.779
         },
         "12": {
-          "alerts": 1047,
-          "true_alerts": 873,
-          "missed_overload_hours": 258,
-          "precision": 0.8338,
-          "recall": 0.7719,
-          "alerts_per_zone_day": 2.43,
-          "f1": 0.8017
+          "alerts": 1344,
+          "true_alerts": 963,
+          "missed_overload_hours": 317,
+          "precision": 0.7165,
+          "recall": 0.7523,
+          "alerts_per_zone_day": 3.21,
+          "f1": 0.734
         },
         "24": {
-          "alerts": 1062,
-          "true_alerts": 883,
-          "missed_overload_hours": 257,
-          "precision": 0.8315,
-          "recall": 0.7746,
-          "alerts_per_zone_day": 2.465,
-          "f1": 0.802
+          "alerts": 1355,
+          "true_alerts": 960,
+          "missed_overload_hours": 320,
+          "precision": 0.7085,
+          "recall": 0.75,
+          "alerts_per_zone_day": 3.236,
+          "f1": 0.7287
         }
       },
       "warning_rule_at_lead_upper_band": {
         "1": {
-          "alerts": 1643,
-          "true_alerts": 1121,
-          "missed_overload_hours": 3,
-          "precision": 0.6823,
-          "recall": 0.9973,
-          "alerts_per_zone_day": 3.813,
-          "f1": 0.8103
+          "alerts": 1804,
+          "true_alerts": 1268,
+          "missed_overload_hours": 12,
+          "precision": 0.7029,
+          "recall": 0.9906,
+          "alerts_per_zone_day": 4.308,
+          "f1": 0.8223
         },
         "6": {
-          "alerts": 2223,
-          "true_alerts": 1122,
-          "missed_overload_hours": 7,
-          "precision": 0.5047,
-          "recall": 0.9938,
-          "alerts_per_zone_day": 5.159,
-          "f1": 0.6695
+          "alerts": 3175,
+          "true_alerts": 1276,
+          "missed_overload_hours": 4,
+          "precision": 0.4019,
+          "recall": 0.9969,
+          "alerts_per_zone_day": 7.582,
+          "f1": 0.5728
         },
         "12": {
-          "alerts": 2264,
-          "true_alerts": 1124,
-          "missed_overload_hours": 7,
-          "precision": 0.4965,
-          "recall": 0.9938,
-          "alerts_per_zone_day": 5.254,
-          "f1": 0.6622
+          "alerts": 3559,
+          "true_alerts": 1277,
+          "missed_overload_hours": 3,
+          "precision": 0.3588,
+          "recall": 0.9977,
+          "alerts_per_zone_day": 8.499,
+          "f1": 0.5278
         },
         "24": {
-          "alerts": 2294,
-          "true_alerts": 1134,
-          "missed_overload_hours": 6,
-          "precision": 0.4943,
-          "recall": 0.9947,
-          "alerts_per_zone_day": 5.324,
-          "f1": 0.6605
+          "alerts": 3467,
+          "true_alerts": 1273,
+          "missed_overload_hours": 7,
+          "precision": 0.3672,
+          "recall": 0.9945,
+          "alerts_per_zone_day": 8.279,
+          "f1": 0.5363
         }
       }
     },
     "alarm": {
-      "hours_scored": 10413,
+      "hours_scored": 10122,
       "threshold": 0.6,
-      "positive_rate": 0.1095,
-      "precision": 0.8768,
-      "recall": 0.9053,
-      "f1": 0.8908,
-      "true_positive_hours": 1032,
-      "false_alarm_hours": 145,
-      "missed_hours": 108,
-      "alarm_hours": 1177,
-      "false_alarms_per_zone_day": 0.334,
-      "brier": 0.01851,
-      "brier_base_rate": 0.09749,
-      "brier_skill": 0.8102,
-      "critical_hours": 1033,
-      "shed_hours_priority_1": 1033,
-      "shed_hours_priority_2": 144,
+      "positive_rate": 0.1265,
+      "precision": 0.8838,
+      "recall": 0.7844,
+      "f1": 0.8311,
+      "true_positive_hours": 1004,
+      "false_alarm_hours": 132,
+      "missed_hours": 276,
+      "alarm_hours": 1136,
+      "false_alarms_per_zone_day": 0.313,
+      "brier": 0.03089,
+      "brier_base_rate": 0.11047,
+      "brier_skill": 0.7204,
+      "critical_hours": 994,
+      "shed_hours_priority_1": 994,
+      "shed_hours_priority_2": 142,
       "reliability": [
         {
           "bucket": "low",
-          "n": 9048,
+          "n": 8813,
           "mean_predicted": 0.0069,
-          "observed_overload_rate": 0.0049
+          "observed_overload_rate": 0.0221
         },
         {
           "bucket": "moderate",
-          "n": 188,
-          "mean_predicted": 0.4477,
-          "observed_overload_rate": 0.3404
+          "n": 173,
+          "mean_predicted": 0.4518,
+          "observed_overload_rate": 0.4682
         },
         {
           "bucket": "elevated",
-          "n": 144,
-          "mean_predicted": 0.7078,
-          "observed_overload_rate": 0.5625
+          "n": 142,
+          "mean_predicted": 0.7054,
+          "observed_overload_rate": 0.6127
         },
         {
           "bucket": "critical",
-          "n": 1033,
-          "mean_predicted": 0.9685,
-          "observed_overload_rate": 0.9206
+          "n": 994,
+          "mean_predicted": 0.9728,
+          "observed_overload_rate": 0.9225
         }
       ],
       "per_zone": {
         "ES": {
-          "hours": 3471,
-          "positive_rate": 0.051,
-          "precision": 0.8218,
-          "recall": 0.9379,
-          "mean_score": 0.0643,
-          "alarm_hours": 202
+          "hours": 3374,
+          "positive_rate": 0.171,
+          "precision": 0.9238,
+          "recall": 0.9671,
+          "mean_score": 0.1824,
+          "alarm_hours": 604
         },
         "GR": {
-          "hours": 3471,
-          "positive_rate": 0.0078,
-          "precision": 0.7,
-          "recall": 0.7778,
-          "mean_score": 0.0108,
-          "alarm_hours": 30
+          "hours": 3374,
+          "positive_rate": 0.0782,
+          "precision": 0.8601,
+          "recall": 0.9318,
+          "mean_score": 0.0892,
+          "alarm_hours": 286
         },
         "IT_SOUTH": {
-          "hours": 3471,
-          "positive_rate": 0.2697,
-          "precision": 0.8942,
-          "recall": 0.9028,
-          "mean_score": 0.2848,
-          "alarm_hours": 945
+          "hours": 3374,
+          "positive_rate": 0.1301,
+          "precision": 0.813,
+          "recall": 0.4556,
+          "mean_score": 0.0859,
+          "alarm_hours": 246
         }
       }
     },
     "events": {
-      "n_events": 206,
-      "n_detected": 188,
-      "detection_recall": 0.9126,
-      "median_lead_hours_stable": 3.0,
-      "median_lead_hours_glimpse": 24.0,
-      "share_warned_1h": 0.6019,
-      "share_warned_3h": 0.5194,
-      "share_warned_6h": 0.4563,
+      "n_events": 181,
+      "n_detected": 142,
+      "detection_recall": 0.7845,
+      "median_lead_hours_stable": 1.0,
+      "median_lead_hours_glimpse": 5.0,
+      "share_warned_1h": 0.5691,
+      "share_warned_3h": 0.3425,
+      "share_warned_6h": 0.2983,
       "median_stable_lead_upper_band": 24.0,
-      "share_stable_3h_upper_band": 0.9563,
+      "share_stable_3h_upper_band": 0.9337,
       "top_onset_hours": [
         {
-          "hour_utc": 5,
-          "n_events": 47
+          "hour_utc": 9,
+          "n_events": 24
         },
         {
           "hour_utc": 8,
-          "n_events": 26
+          "n_events": 23
         },
         {
-          "hour_utc": 6,
-          "n_events": 25
+          "hour_utc": 7,
+          "n_events": 20
         },
         {
-          "hour_utc": 4,
+          "hour_utc": 10,
           "n_events": 20
         }
       ],
-      "longest_event_hours": 16,
+      "longest_event_hours": 18,
       "events": [
         {
-          "zone": "IT_SOUTH",
-          "onset": "2026-05-21T07:00:00+00:00",
-          "duration_hours": 4,
-          "peak_load_mw": 4551.4,
-          "warn_level_mw": 4429.4,
-          "alarm_during_event": true,
-          "lead_hours_glimpse": 24,
-          "lead_hours_stable": 24
-        },
-        {
-          "zone": "IT_SOUTH",
-          "onset": "2026-05-29T07:00:00+00:00",
-          "duration_hours": 2,
-          "peak_load_mw": 4481.6,
-          "warn_level_mw": 4429.4,
-          "alarm_during_event": true,
-          "lead_hours_glimpse": 24,
-          "lead_hours_stable": 24
-        },
-        {
-          "zone": "IT_SOUTH",
-          "onset": "2026-06-01T06:00:00+00:00",
-          "duration_hours": 4,
-          "peak_load_mw": 4667.9,
-          "warn_level_mw": 4429.4,
-          "alarm_during_event": true,
-          "lead_hours_glimpse": 24,
-          "lead_hours_stable": 24
-        },
-        {
-          "zone": "IT_SOUTH",
-          "onset": "2026-06-02T07:00:00+00:00",
-          "duration_hours": 2,
-          "peak_load_mw": 4488.3,
-          "warn_level_mw": 4429.4,
-          "alarm_during_event": true,
-          "lead_hours_glimpse": 24,
-          "lead_hours_stable": 24
-        },
-        {
-          "zone": "IT_SOUTH",
-          "onset": "2026-06-03T07:00:00+00:00",
-          "duration_hours": 4,
-          "peak_load_mw": 4619.6,
-          "warn_level_mw": 4429.4,
-          "alarm_during_event": true,
-          "lead_hours_glimpse": 24,
-          "lead_hours_stable": 24
-        },
-        {
-          "zone": "IT_SOUTH",
-          "onset": "2026-06-04T06:00:00+00:00",
+          "zone": "ES",
+          "onset": "2026-06-18T17:00:00+00:00",
           "duration_hours": 3,
-          "peak_load_mw": 4649.6,
-          "warn_level_mw": 4429.4,
+          "peak_load_mw": 34567.0,
+          "warn_level_mw": 33493.7,
           "alarm_during_event": true,
           "lead_hours_glimpse": 24,
           "lead_hours_stable": 24
         },
         {
-          "zone": "IT_SOUTH",
-          "onset": "2026-06-05T07:00:00+00:00",
+          "zone": "ES",
+          "onset": "2026-06-24T16:00:00+00:00",
+          "duration_hours": 5,
+          "peak_load_mw": 35375.0,
+          "warn_level_mw": 33493.7,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "ES",
+          "onset": "2026-06-25T15:00:00+00:00",
+          "duration_hours": 6,
+          "peak_load_mw": 35510.0,
+          "warn_level_mw": 33493.7,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "ES",
+          "onset": "2026-06-26T11:00:00+00:00",
           "duration_hours": 2,
-          "peak_load_mw": 4479.1,
-          "warn_level_mw": 4429.4,
+          "peak_load_mw": 33617.0,
+          "warn_level_mw": 33493.7,
           "alarm_during_event": true,
           "lead_hours_glimpse": 24,
           "lead_hours_stable": 24
         },
         {
-          "zone": "IT_SOUTH",
-          "onset": "2026-06-08T06:00:00+00:00",
+          "zone": "ES",
+          "onset": "2026-06-26T16:00:00+00:00",
           "duration_hours": 4,
-          "peak_load_mw": 4601.6,
-          "warn_level_mw": 4429.4,
+          "peak_load_mw": 35185.0,
+          "warn_level_mw": 33493.7,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "ES",
+          "onset": "2026-06-29T12:00:00+00:00",
+          "duration_hours": 9,
+          "peak_load_mw": 36453.0,
+          "warn_level_mw": 33493.7,
           "alarm_during_event": true,
           "lead_hours_glimpse": 24,
           "lead_hours_stable": 24
         },
         {
           "zone": "IT_SOUTH",
-          "onset": "2026-06-09T06:00:00+00:00",
-          "duration_hours": 4,
-          "peak_load_mw": 4562.7,
-          "warn_level_mw": 4429.4,
-          "alarm_during_event": true,
-          "lead_hours_glimpse": 24,
-          "lead_hours_stable": 24
-        },
-        {
-          "zone": "IT_SOUTH",
-          "onset": "2026-06-10T06:00:00+00:00",
-          "duration_hours": 3,
-          "peak_load_mw": 4586.1,
-          "warn_level_mw": 4429.4,
-          "alarm_during_event": true,
-          "lead_hours_glimpse": 24,
-          "lead_hours_stable": 24
-        },
-        {
-          "zone": "IT_SOUTH",
-          "onset": "2026-06-11T08:00:00+00:00",
+          "onset": "2026-06-30T18:00:00+00:00",
           "duration_hours": 1,
-          "peak_load_mw": 4512.9,
-          "warn_level_mw": 4429.4,
+          "peak_load_mw": 3411.0,
+          "warn_level_mw": 3361.4,
+          "alarm_during_event": false,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "GR",
+          "onset": "2026-07-01T09:00:00+00:00",
+          "duration_hours": 6,
+          "peak_load_mw": 8481.5,
+          "warn_level_mw": 7987.7,
           "alarm_during_event": true,
           "lead_hours_glimpse": 24,
           "lead_hours_stable": 24
         },
         {
-          "zone": "IT_SOUTH",
-          "onset": "2026-06-12T07:00:00+00:00",
-          "duration_hours": 2,
-          "peak_load_mw": 4554.1,
-          "warn_level_mw": 4429.4,
+          "zone": "ES",
+          "onset": "2026-07-01T10:00:00+00:00",
+          "duration_hours": 11,
+          "peak_load_mw": 36225.0,
+          "warn_level_mw": 33493.7,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "ES",
+          "onset": "2026-07-02T15:00:00+00:00",
+          "duration_hours": 6,
+          "peak_load_mw": 36350.0,
+          "warn_level_mw": 33493.7,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "ES",
+          "onset": "2026-07-08T07:00:00+00:00",
+          "duration_hours": 15,
+          "peak_load_mw": 39100.0,
+          "warn_level_mw": 33493.7,
+          "alarm_during_event": true,
+          "lead_hours_glimpse": 24,
+          "lead_hours_stable": 24
+        },
+        {
+          "zone": "ES",
+          "onset": "2026-07-09T07:00:00+00:00",
+          "duration_hours": 15,
+          "peak_load_mw": 38249.0,
+          "warn_level_mw": 33493.7,
           "alarm_during_event": true,
           "lead_hours_glimpse": 24,
           "lead_hours_stable": 24
@@ -488,7 +489,7 @@
       "target": 0.1,
       "floor": 0.0,
       "label": "h+1 forecast beats seasonal-naive by >=10% MAPE",
-      "value": 0.569,
+      "value": 0.7717,
       "result": "PASS"
     },
     {
@@ -498,7 +499,7 @@
       "target": 0.1,
       "floor": 0.0,
       "label": "h+24 forecast beats seasonal-naive by >=10% MAPE",
-      "value": 0.1609,
+      "value": 0.3841,
       "result": "PASS"
     },
     {
@@ -514,7 +515,7 @@
         0.98
       ],
       "label": "P10-P90 coverage within 0.70-0.95 (nominal 0.80)",
-      "value": 0.8426,
+      "value": 0.8492,
       "result": "PASS"
     },
     {
@@ -524,8 +525,8 @@
       "target": 0.15,
       "floor": 0.3,
       "label": "weekly coverage spread <=0.15 (band not decaying across the window)",
-      "value": 0.1417,
-      "result": "PASS"
+      "value": 0.1948,
+      "result": "WARN"
     },
     {
       "id": "forecast_warning_precision_h6",
@@ -534,7 +535,7 @@
       "target": 0.5,
       "floor": 0.35,
       "label": "overload warning raised 6h ahead is >=50% correct (all origins, not just events)",
-      "value": 0.8388,
+      "value": 0.7641,
       "result": "PASS"
     },
     {
@@ -544,7 +545,7 @@
       "target": 0.5,
       "floor": 0.35,
       "label": "alarm precision >=0.50 at score>=0.6",
-      "value": 0.8768,
+      "value": 0.8838,
       "result": "PASS"
     },
     {
@@ -554,7 +555,7 @@
       "target": 0.5,
       "floor": 0.35,
       "label": "alarm recall >=0.50 at score>=0.6",
-      "value": 0.9053,
+      "value": 0.7844,
       "result": "PASS"
     },
     {
@@ -564,7 +565,7 @@
       "target": 0.15,
       "floor": 0.05,
       "label": "Brier skill over the base-rate forecast >=0.15",
-      "value": 0.8102,
+      "value": 0.7204,
       "result": "PASS"
     },
     {
@@ -574,7 +575,7 @@
       "target": 5.0,
       "floor": 10.0,
       "label": "<=5 false alarms per zone-day (operator alert fatigue)",
-      "value": 0.334,
+      "value": 0.313,
       "result": "PASS"
     },
     {
@@ -584,8 +585,8 @@
       "target": 0.8,
       "floor": 0.6,
       "label": ">=80% of real overload events raise an alarm while running",
-      "value": 0.9126,
-      "result": "PASS"
+      "value": 0.7845,
+      "result": "WARN"
     },
     {
       "id": "event_warning_3h",
@@ -594,8 +595,8 @@
       "target": 0.5,
       "floor": 0.25,
       "label": ">=50% of events forecast-warned >=3h before onset",
-      "value": 0.5194,
-      "result": "PASS"
+      "value": 0.3425,
+      "result": "WARN"
     },
     {
       "id": "median_lead_hours",
@@ -604,8 +605,8 @@
       "target": 3.0,
       "floor": 1.0,
       "label": "median STABLE forecast lead before onset >=3h (unbroken warning from h+1)",
-      "value": 3.0,
-      "result": "PASS"
+      "value": 1.0,
+      "result": "WARN"
     },
     {
       "id": "replay_coverage",
@@ -614,9 +615,9 @@
       "target": 500,
       "floor": 100,
       "label": ">=500 forecast origins replayed (window actually covered)",
-      "value": 10341,
+      "value": 10050,
       "result": "PASS"
     }
   ],
-  "overall": "PASS"
+  "overall": "WARN"
 }

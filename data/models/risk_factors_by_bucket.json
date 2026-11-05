@@ -1,58 +1,58 @@
 {
   "low": [
     {
+      "feature": "hour_cos",
+      "contribution": -0.153
+    },
+    {
       "feature": "load_lag_1h",
-      "contribution": -1.1725
+      "contribution": -0.4868
     },
     {
-      "feature": "load_lag_24h",
-      "contribution": -0.3637
-    },
-    {
-      "feature": "load_roll_mean_24h",
-      "contribution": -0.0768
+      "feature": "temperature_c",
+      "contribution": 0.4009
     }
   ],
   "moderate": [
     {
       "feature": "load_lag_1h",
-      "contribution": 3.3325
+      "contribution": 2.2724
     },
     {
-      "feature": "load_roll_mean_24h",
-      "contribution": 0.3628
+      "feature": "temperature_c",
+      "contribution": 2.0944
     },
     {
-      "feature": "load_lag_24h",
-      "contribution": 0.7858
+      "feature": "hour_cos",
+      "contribution": 1.4352
     }
   ],
   "elevated": [
     {
       "feature": "load_lag_1h",
-      "contribution": 3.7804
+      "contribution": 2.8612
     },
     {
-      "feature": "load_roll_mean_24h",
-      "contribution": 0.3636
+      "feature": "temperature_c",
+      "contribution": 2.4467
     },
     {
-      "feature": "load_lag_24h",
-      "contribution": 0.908
+      "feature": "hour_cos",
+      "contribution": 1.4978
     }
   ],
   "critical": [
     {
       "feature": "load_lag_1h",
-      "contribution": 5.0999
+      "contribution": 8.8843
     },
     {
-      "feature": "load_roll_mean_24h",
-      "contribution": 1.6008
+      "feature": "temperature_c",
+      "contribution": 2.0074
     },
     {
-      "feature": "load_lag_24h",
-      "contribution": 1.0012
+      "feature": "hour_cos",
+      "contribution": 1.8436
     }
   ]
 }

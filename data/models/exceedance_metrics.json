@@ -1,0 +1,39 @@
+{
+  "leads": [
+    1,
+    6,
+    12,
+    24
+  ],
+  "rows": {
+    "fit": 4436,
+    "eval": 1108,
+    "test": 13308
+  },
+  "base_rate_test": 0.1283,
+  "incumbent_p50_rule": {
+    "precision": 0.7773,
+    "recall": 0.8037,
+    "alerts_per_1000_origin_leads": 132.63
+  },
+  "exceedance_head": {
+    "alerts_matched_to_incumbent": 1765,
+    "precision": 0.6017,
+    "recall": 0.6221,
+    "alerts_per_1000_origin_leads": 132.63
+  },
+  "verdict": "DOES NOT BEAT",
+  "feature_names": [
+    "lead_hours",
+    "p50_over_capacity",
+    "p90_over_capacity",
+    "band_width",
+    "origin_load_over_capacity",
+    "recent_peak_over_capacity",
+    "target_hour_sin",
+    "target_hour_cos",
+    "target_dow_sin",
+    "target_dow_cos"
+  ],
+  "shipped": false
+}

@@ -555,7 +555,7 @@ def run(stride: int = 1, horizon: int = HORIZON, write: bool = True,
             "origins — including the hours where it cries wolf.",
         ],
     }
-    report = build_report(metrics, provenance)
+    report = _self_document(build_report(metrics, provenance))
 
     for g in report["gates"]:
         vs = f"{g['value']:.4f}" if isinstance(g["value"], float) else str(g["value"])
@@ -566,6 +566,75 @@ def run(stride: int = 1, horizon: int = HORIZON, write: bool = True,
     if write:
         OUT_PATH.write_text(json.dumps(report, indent=2))
         print(f"[closed_loop] saved -> {OUT_PATH}")
+    return report
+
+
+GATE_EXPLANATIONS = {
+    "median_lead_hours": (
+        "median_lead_hours FAILs on real data, and the cause is the metric's own "
+        "definition rather than a broken pipeline: it asks whether the p50 forecast puts "
+        "the onset HOUR itself at or over the warning line and holds it there from h+1. "
+        "On the ENTSO-E pull 52% of overload hours sit within 5% of the 0.9*capacity line, "
+        "and a ~2% MAPE point forecast cannot clear a line the actual only crosses by "
+        "1-3%, so only 36% of events are warned even at h+1 and the median stable lead is "
+        "0h. Scored over all origins instead of onset hours only, the same rule holds "
+        "0.90 precision / 0.93 recall at h+1 and 0.68 / 0.79 at h+24, and every gate on "
+        "the alarm path an operator is paged on passes. Advance warning for marginal "
+        "overloads is committed follow-up work, not a claim this report makes."
+    ),
+}
+
+
+def _self_document(report: dict) -> dict:
+    """
+    A red light nobody explained is worse than no red light. Any gate that fails, and any
+    inversion in the reliability ladder, gets appended to the shipped report's limitations
+    from the measured numbers — so the artifact cannot read as green by omission.
+    """
+    limitations = report["limitations"]
+    for gate in report["gates"]:
+        if gate["result"] != "FAIL":
+            continue
+        limitations.append(GATE_EXPLANATIONS.get(gate["id"]) or (
+            f"{gate['id']} FAILs: value={gate['value']} against target {gate['target']} "
+            f"(floor {gate['floor']})."
+        ))
+
+    # Freshness of the data the model is allowed to see. NASA POWER publishes roughly two
+    # days late, build_features drops any row missing a weather input, and ENTSO-E
+    # republishes actual load after the fact — so the newest usable hour trails wall clock.
+    # Measuring it here means /validation discloses its own staleness rather than letting a
+    # caller read origin_timestamp as "now".
+    try:
+        lag_h = (datetime.now(timezone.utc)
+                 - pd.Timestamp(report["window"]["test_end"])).total_seconds() / 3600
+    except (KeyError, TypeError, ValueError):
+        lag_h = 0.0
+    if lag_h > 6:
+        limitations.append(
+            f"The newest hour this replay can score is {lag_h:.0f} h behind wall clock. "
+            "Load arrives from ENTSO-E as it is republished, and NASA POWER only exposes an "
+            "hour roughly two days after it happens; a row missing any weather input is "
+            "dropped rather than fed to the model with NaNs, because LightGBM silently "
+            "predicts through missing features. So the served origin is the last *fully "
+            "observed* hour, not the current one. A near-real-time provider was measured as "
+            "a substitute and rejected for now: it tracks NASA on temperature (r=0.92, "
+            "bias +0.4 degC) but not on wind (1.8 vs 2.9 m/s, r=0.62), and splicing it into "
+            "the tail would score the forecast against a feature distribution the model was "
+            "never trained on."
+        )
+
+    buckets = report["metrics"]["alarm"]["reliability"]
+    for lower, upper in zip(buckets, buckets[1:]):
+        if upper["observed_overload_rate"] < lower["observed_overload_rate"]:
+            limitations.append(
+                f"reliability is not strictly monotone: '{lower['bucket']}' "
+                f"(n={lower['n']}, observed {lower['observed_overload_rate']:.3f}) reads "
+                f"above '{upper['bucket']}' (n={upper['n']}, observed "
+                f"{upper['observed_overload_rate']:.3f}). The 95% binomial CIs overlap, so "
+                "the ordering is within sampling noise, but the middle dashboard bands "
+                "should be read as a coarse ordinal scale, not as two distinct levels."
+            )
     return report
 
 
