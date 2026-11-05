@@ -78,10 +78,25 @@ def recursive_forecast_batch(model, loads: np.ndarray, weather: np.ndarray,
 
 
 def recursive_forecast(model, history: pd.DataFrame, horizon: int, feature_cols: list[str]) -> pd.DataFrame:
-    """Single-origin wrapper. history: one zone, contiguous hourly, sorted."""
+    """Single-origin wrapper. history: one zone, contiguous hourly, sorted.
+
+    A frame carrying only timestamp + load_mw is valid when `feature_cols` selects no
+    weather column — that is how the no-weather fallback forecasts from the last
+    published load hour while NASA's weather for those hours is still unavailable.
+    """
     history = history.sort_values("timestamp")
     loads = history["load_mw"].to_numpy(dtype=float)[None, :]
-    weather = history[WEATHER_COLS].to_numpy(dtype=float)[None, :, :]
+    has_weather = all(c in history.columns for c in WEATHER_COLS)
+    if has_weather:
+        weather = history[WEATHER_COLS].to_numpy(dtype=float)[None, :, :]
+    else:
+        asked = [c for c in WEATHER_COLS if c in feature_cols]
+        if asked:
+            raise ValueError(
+                "history has no weather columns but the model needs "
+                f"{asked}; refusing to forecast them as zeros"
+            )
+        weather = np.zeros((1, len(history), len(WEATHER_COLS)))
     last_ts = pd.DatetimeIndex([history["timestamp"].iloc[-1]])
     preds = recursive_forecast_batch(model, loads, weather, last_ts, horizon, feature_cols)[0]
     steps = np.arange(1, horizon + 1)
