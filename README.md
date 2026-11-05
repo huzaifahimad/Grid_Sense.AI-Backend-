@@ -15,31 +15,52 @@ FastAPI · LightGBM · ENTSO-E · NASA POWER · Deploys to FastAPI Cloud
 
 GridSense AI predicts electricity grid overload **before it happens**. It ingests hourly
 grid load data (ENTSO-E Transparency Platform) and weather data (NASA POWER), engineers
-leak-free time-series features, and serves two trained models through a REST API:
+leak-free time-series features, and serves three trained models through a REST API:
 
-- **Load Forecaster** (LightGBM regressor) — recursive 1–48h-ahead demand forecast from
-  the latest observation. P10/P90 are **split-conformal intervals** calibrated per horizon
-  on a held-out validation window (closed-loop replay coverage **84.3%** vs. 80% nominal).
-  Honest test MAPE: **2.24%** at 1h ahead, **~4.3%** at 6–48h ahead vs. **~5.1%** seasonal-naive and
-  **6.59%** persistence. Future weather uses persistence (same hour, previous day) until
-  an NWP feed is connected.
+- **Load Forecaster** (LightGBM regressor) — recursive ahead-of-origin demand forecast from
+  the latest observation, served for 1-48 h (`MAX_HORIZON_HOURS`). P10/P90 are
+  **split-conformal intervals** calibrated per horizon on a held-out validation window
+  (closed-loop replay coverage **84.92%** against 80% nominal). Measured on the real test
+  window: MAPE **2.10%** overall for the 16-feature model, versus **9.20%** seasonal-naive
+  and **7.81%** persistence. Per horizon, replayed through the serving path: **2.12%** at
+  h+1, **4.99%** at h+6, **5.45%** at h+12, **5.71%** at h+24. Future weather uses
+  persistence (same hour, previous day) until an NWP feed is connected.
+- **No-weather fallback forecaster** (LightGBM regressor, 13 features) — the same recursion
+  without the three weather inputs, with its own separately calibrated bands. NASA POWER
+  publishes an hour roughly two days late, so the freshest ENTSO-E load hours have no
+  weather row; the weather-aware model is not fed invented inputs, and the API answers those
+  origins from this model instead and says which one it used in `served_by`. Test MAPE
+  **2.12%**, within 0.02 pp of the weather-aware model.
 - **Overload Risk Classifier** (LightGBM classifier) — per-zone risk score with
-  precomputed SHAP explanations. Test PR-AUC **0.9595**, Brier **0.0185** (base rate
-  0.0975). Early stopping uses a validation slice, never the test set.
+  precomputed SHAP explanations. Test PR-AUC **0.9268**, Brier **0.0309** against a base-rate
+  reference of **0.1105** (train positive rate 4.76%). Early stopping uses a validation
+  slice, never the test set.
 - **Load-Shedding Recommender** (rules-based) — priority-ranked shedding schedule with
   human-readable reasoning. The system *recommends*; it never controls anything.
 
-Zones covered: **Spain (ES)** · **Greece (GR)** · **Southern Italy (IT_SOUTH)** — with the
-architecture designed to retrain on Pakistani NTDC/DISCO grid data once access is secured.
+Zones covered: **Spain (ES)** · **Greece (GR)** · **Southern Italy (IT_SOUTH)**. These are
+European bidding zones used as a working proxy. **No Pakistani grid data has been used.**
+The architecture is built so it can be retrained on NTDC/DISCO data once access is secured;
+nothing in the current accuracy figures transfers to the Pakistani grid without that
+retraining and a fresh validation run.
 
-> **Honesty note:** the committed model artifacts are currently trained on realistic
-> **synthetic bootstrap data** (documented, not hidden) so the entire pipeline could be
-> built and verified end-to-end while real ENTSO-E API approval was pending. The
-> real-data ingestion code is complete — see
-> [`docs/04_Pipeline_Documentation.md`](docs/04_Pipeline_Documentation.md) before citing
-> any accuracy number.
+> **Honesty note:** the committed artifacts are trained on **real** hourly data from the
+> ENTSO-E Transparency Platform (load) and NASA POWER (weather), 2024-11 through 2026-11,
+> `/health` reports `is_synthetic: false` with per-source row counts. Three things are
+> still proxies and are flagged as such everywhere: capacity is a **p99-of-load estimate**,
+> not rated thermal capacity, so "overload" means unusually high for that zone; the labels
+> derive from the same load series the models consume; and future weather is persistence,
+> not an NWP feed. `GET /health → data_provenance` therefore reports one horizon per feed
+> (`load_latest_timestamp`, `weather_latest_timestamp`, `weather_lag_hours`, `capacity`)
+> rather than a single "last updated" — reanalysis reaches its newest hour roughly four
+> days after load does, and at the time of writing it was 90 h behind, which is what pushes
+> `/forecast` onto the no-weather fallback and `/risk` onto the newest hour every input
+> covers. The closed-loop release gates currently grade **WARN**, 9 of 13 passing
+> and 4 short (band coverage drift, event detection, 3 h warning share, median stable lead).
+> See [`docs/04_Pipeline_Documentation.md`](docs/04_Pipeline_Documentation.md) and
+> `GET /validation` before citing any accuracy number.
 
-**Tests:** `python -m pytest tests -q` — 48 tests covering endpoint contracts, train/serve
+**Tests:** `python -m pytest tests -q` — 59 tests covering endpoint contracts, train/serve
 feature parity, label-leak guard, interval calibration, the lean serving import path, and
 the closed-loop validator (gate grading, lead-time math, and negative controls that prove
 the gates fail when they should).
@@ -89,21 +110,26 @@ curl https://<your-app>.fastapicloud.dev/risk/IT_SOUTH
 
 ```json
 {
-  "zone": "IT_SOUTH",
-  "asset_id": "IT_SOUTH-FEEDER-01",
-  "risk_score": 0.994,
-  "status": "critical",
-  "snapshot_timestamp": "2026-09-01T18:00:00+00:00",
-  "snapshot_load_mw": 4635.7,
-  "capacity_mw": 4921.58,
+  "zone": "ES",
+  "asset_id": "ES-FEEDER-01",
+  "risk_score": 0.0016,
+  "status": "normal",
+  "snapshot_timestamp": "2026-10-29T18:00:00+00:00",
+  "snapshot_load_mw": 32193.0,
+  "capacity_mw": 37215.17,
   "top_factors": [
-    {"feature": "load_lag_1h", "contribution": 5.0999},
-    {"feature": "load_roll_mean_24h", "contribution": 1.6008},
-    {"feature": "load_lag_24h", "contribution": 1.0012}
+    {"feature": "hour_cos", "contribution": -0.153},
+    {"feature": "load_lag_1h", "contribution": -0.4868},
+    {"feature": "temperature_c", "contribution": 0.4009}
   ],
   "is_proxy_capacity": true
 }
 ```
+
+That reading is low because ES sits at 86% of its own p99 proxy, under the 0.9 overload
+ratio — a genuine "normal", not an inert model. `scripts/verify_prediction_integrity.py`
+re-derives every served score from the committed artifacts, and perturbing the load by
++110% moves this zone's score from 0.0003 to 0.66.
 
 ---
 
@@ -118,26 +144,38 @@ python -m models.closed_loop_validation          # writes data/models/closed_loo
 python -m models.closed_loop_validation --strict # exits 1 if any gate is WARN/FAIL
 ```
 
-The replay covers 3,471 zone-hours (10,413 scored rows, 10,341 hourly forecast origins,
-24-hour horizon) across **ES · GR · IT_SOUTH**, and grades 13 gates against a target and a
-hard floor. Current report: **overall PASS, 13/13**.
+The replay covers 3,464 hours (10,122 scored rows, 10,050 hourly forecast origins at a 1-hour
+stride, 24-hour horizon) across **ES · GR · IT_SOUTH**, and grades 13 gates against a target
+and a hard floor. Current report: **overall WARN — 9 PASS, 4 WARN**, the four short gates being
+band-coverage drift and the three event lead-time gates. It is reported as WARN rather than
+having the targets lowered.
 
-| Gate family | Measured |
-|---|---|
-| Forecast skill | h+1 MAPE 2.24% vs 5.21% seasonal-naive (**+56.9%**); h+24 4.36% vs 5.20% (**+16.1%**) |
-| Interval honesty | P10–P90 coverage 84.3% (target 70–95%), week-to-week drift 14.2 pts |
-| Forecast warnings | 6-hour-lead overload warnings **83.9% precision** / 77.4% recall over all origins |
-| Alarm quality | precision 87.7%, recall 90.5%, F1 89.1%, Brier skill 0.81 against a 0.097 base rate |
-| Alarm burden | 0.33 false alarms per zone-day (145 false-alarm hours across 434 zone-days) |
-| Event response | 188/206 overload events alarmed; **stable median lead 3.0 h**, 51.9% warned ≥3 h ahead |
-| Replay integrity | 10,341 origins replayed, zero gaps in the hourly series |
+| Gate family | Measured | Grade |
+|---|---|---|
+| Forecast skill | h+1 MAPE 2.12% vs 9.27% seasonal-naive (**+77.2%**); h+24 5.71% vs 9.27% (**+38.4%**) | PASS |
+| Interval honesty | P10–P90 coverage 84.92% (target 70–95%); week-to-week spread 19.5 pts (target ≤15) | PASS / **WARN** |
+| Forecast warnings | p50-over-line at h+6: **76.4% precision**, 79.5% recall, 3.18 alerts per zone-day, over all 10,050 origins | PASS |
+| Alarm quality | precision 88.38%, recall 78.44%, F1 83.11%, Brier skill 0.72 against a 0.1105 base rate | PASS |
+| Alarm burden | 0.313 false alarms per zone-day (132 false-alarm hours, 1,004 true-alarm hours) | PASS |
+| Event response | 142/181 overload events alarmed (**78.45%**, target 80%); **median stable lead 1.0 h** (target 3.0); 34.3% warned ≥3 h ahead (target 50%) | **WARN** ×3 |
+| Replay integrity | 10,050 origins replayed, 10,122 rows scored; 2 hourly gaps in ES, none in GR or IT_SOUTH | PASS |
 
-Two lead-time numbers are reported on purpose: *stable* lead (an unbroken chain of
-warnings from h+1) and *glimpse* lead (the earliest time any horizon saw it). Glimpse lead
-reads 24 h here only because the longest forecast reproduces the daily peak — the gates are
-scored on the stable number. Read the caveats in the report's `limitations` block before
-quoting any figure: capacity is a **p99-of-load proxy**, not rated capacity, and the replay
-uses **weather persistence** beyond the observation window.
+Per zone, because the aggregate hides a real difference: ES precision 92.4% / recall 96.7%,
+GR 86.0% / 93.2%, IT_SOUTH 81.3% / **45.6%**. Southern Italy is the weakest zone and the
+recall gap there is the main reason the event gates miss their target.
+
+Two lead-time numbers are reported on purpose: *stable* lead (an unbroken chain of warnings
+from h+1) and *glimpse* lead (the earliest time any horizon saw it). On real data the medians
+are **1.0 h stable** and **5.0 h glimpse**. Scoring the upper band instead of the point
+forecast would lift the median stable lead to 24 h and the ≥3 h warned share to 93.4%, but it
+costs 76.4% → 40.2% precision at h+6 and 3.18 → 7.58 alerts per zone-day, which is the alert
+fatigue the burden gate exists to prevent. A second-stage classifier was trained to get the
+early warnings without that cost; on the test window it scored precision 0.602 / recall 0.622
+against the incumbent rule's 0.777 / 0.804 at matched alert volume, so it is **not shipped**
+and the lead-time gates stay WARN. That is a measured negative, kept in
+`data/models/exceedance_metrics.json`, not a suppressed one. Read the caveats in the report's
+`limitations` block before quoting any figure: capacity is a **p99-of-load proxy**, not rated
+capacity, and the replay uses **weather persistence** beyond the observation window.
 
 The JSON artifact is committed, served at `GET /validation`, and rendered as the
 **Closed-Loop Validation** panel in the dashboard, so a reviewer sees the evidence behind
