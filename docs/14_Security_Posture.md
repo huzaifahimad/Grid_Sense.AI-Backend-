@@ -18,8 +18,8 @@ it says absent. Where a risk is **accepted**, it says accepted and why.
 | Routes | 7 read-only GET endpoints + `/docs`, `/redoc`, `/openapi.json` | `GET /openapi.json` |
 | Methods | `POST /health` → **405** | `curl -X POST …/health` |
 | Write paths | None. No upload, no admin, no auth, no user input persisted | read `api/main.py` route decorators |
-| Request-time egress | **Bounded, no longer zero** (changed 2026-11-06, `f78b76e`). `api/live_refresh.py` fetches the missing ENTSO-E tail, plus NASA POWER when enabled, from a background thread it starts at most once per cache window. Two fixed destinations: the ENTSO-E host compiled into `entsoe-py` and `config.NASA_POWER_BASE_URL`. | `GET /health` → `data_refresh.{attempts,last_success_at,last_error,zones}` |
-| Secrets in 38 commits of history | None matched AWS key, PEM header, JWT, or assigned-token patterns (re-run 2026-11-06T11:06Z, 0 matches) | `git log --all -p \| grep -icE "(AKIA[0-9A-Z]{16}\|BEGIN (RSA \|EC \|OPENSSH )?PRIVATE KEY\|eyJ\[A-Za-z0-9_-\]{20,\}\.eyJ\|securityToken=\[0-9a-f\]{32})"` |
+| Request-time egress | **Bounded, no longer zero** (changed 2026-11-06, `f78b76e`). `api/live_refresh.py` fetches the missing ENTSO-E tail, plus NASA POWER when enabled, from a background thread it starts at most once per cache window. Two destinations: `https://web-api.tp.entsoe.eu/api` unless `ENTSOE_ENDPOINT_URL` overrides it at import (see §5), and `config.NASA_POWER_BASE_URL`. | `GET /health` → `data_refresh.{attempts,last_success_at,last_error,zones}` |
+| Secrets in 40 commits of history | None matched AWS key, PEM header, JWT, or assigned-token patterns (re-run 2026-11-06T11:28Z, 0 matches). A second, broader pattern over credential-shaped assignments also returned 0 (grep exit 1 = no line matched). | `git log --all -p \| grep -icE "(AKIA[0-9A-Z]{16}\|BEGIN (RSA \|EC \|OPENSSH )?PRIVATE KEY\|eyJ\[A-Za-z0-9_-\]{20,\}\.eyJ\|securityToken=\[0-9a-f\]{32})"` |
 | Path traversal | `/../etc/passwd` → 404, `/%2e%2e/%2e%2e/etc/passwd` → 404 | `curl -i` both |
 
 The row above previously read "Zero" and was checked with
@@ -211,7 +211,8 @@ may be running — and is left as an explicit decision.
 - The dependency audit proves *declared versions are not affected by published advisories*. It does
   not prove the installed environment matches the declaration (§6.1 exists because of that gap), and
   it does not assess advisories not yet published.
-- The secret scan is pattern-based over 28 commits of text. Tracked **binary** artifacts
+- The secret scan is pattern-based over 40 commits of text (the count and both patterns are in
+  §1, so the figure is re-derivable rather than transcribed). Tracked **binary** artifacts
   (`.parquet`, `.joblib`) were not string-scanned; a key could in principle be embedded in one.
   Spot-checking them would need a different tool than grep.
 - No penetration test, no fuzzing, no load test was run. The bounds probes were hand-written
@@ -235,13 +236,19 @@ coverage of the new egress path lives:
 - `test_egress_failure_leaves_the_frame_serving` — a failed fetch changes nothing the caller sees.
 - `test_cache_window_blocks_the_next_kick` — request volume cannot amplify egress.
 
-**Limitation of the evidence above.** These runs execute on this machine's interpreter, whose
-package versions differ from the pins in `requirements-api.txt` that the deployed process installs
-(local pandas 2.3.3 / requests 2.31.0 / fastapi 0.104.1 / pyarrow 23.0.1 vs pinned
-pandas 3.0.2 / requests 2.34.2 / fastapi 0.141.1 / pyarrow 25.0.1). Every pin was confirmed to exist
-on PyPI with installable wheels and a compatible `requires-python` on 2026-11-06T11:14Z, so the
-build itself is not at risk; what is not yet proven by these 90 tests is behaviour under the pinned
-pandas major version. §10 item 5 is the ranked action for that drift.
+**Version coverage.** Those 90 tests also pass on the stack the deployment actually installs, not
+only on this machine's drifted versions. An isolated venv built from `requirements-api.txt` verbatim
+(pandas 3.0.2, numpy 2.4.4, requests 2.34.2, fastapi 0.141.1, pyarrow 25.0.1, scikit-learn 1.8.0,
+lightgbm 4.7.0) ran the same suite: **90 passed** (2026-11-06T11:27:24Z), and
+`scripts/verify_model_accuracy.py --skip-live` returned **10 checks / 10 passed / 0 failed**
+(2026-11-06T11:28:42Z) with per-zone figures identical to the ones recorded in
+`docs/15_Model_Accuracy_Verification.md` (GR precision 0.8601 / recall 0.9318, IT_SOUTH recall
+0.4556, the util 0.50→1.30 ladder topping out at 0.490872). So the pinned pandas major version
+changes neither behaviour nor any published metric. Every pin was additionally confirmed to exist on
+PyPI with installable wheels and a compatible `requires-python` (2026-11-06T11:14Z), which is what
+protects the build itself. The caveat that remains is coverage by environment rather than by
+version: the local interpreter and this throwaway venv are the only places the pinned stack is
+exercised besides CI, and neither is the deployed process.
 
 CI on commit `b8c5651` completed with `conclusion=success`, and the per-step record proves the
 new gate executed rather than being skipped:
@@ -287,4 +294,9 @@ re-includes) and running the API out of that stripped directory.
 3. **Rated MW capacity** from an operator source (NTDC for the current ENTSO-E stand-in zones), so
    `capacity_mw` stops being a p99 proxy.
 4. **App-level rate limiting** before the endpoint faces untrusted traffic at volume.
-5. **Upgrade the local dev environment** to the declared pins, or keep documenting the drift.
+5. **Observe one row-producing live refresh in the deployed process.** §9 proves the deployed bundle
+   performs egress and records a token-free failure; it cannot prove a *success*, because the real
+   `ENTSOE_API_KEY` exists only in FastAPI Cloud's secret store. The check is
+   `/health.data_refresh.last_success_at` and `rows_added_total` moving on the live host, then
+   `/forecast/ES` `origin_timestamp` advancing. Local pinned-env coverage is no longer the gap — §8
+   records the suite and the verifier both green on the deployed pins.

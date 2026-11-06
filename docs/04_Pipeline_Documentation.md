@@ -196,7 +196,12 @@ larger rewrite to reduce the pandas/lightgbm import footprint itself).
   should never be committed.
 - Feature and model artifacts ARE committed intentionally (see System Architecture doc
   Section 4 for why, and the trade-off this implies).
-- `config.py`'s `ENTSOE_API_KEY` must remain the placeholder string in every commit.
-  Real tokens go into FastAPI Cloud's encrypted secret store
-  (`fastapi cloud env set --secret ENTSOE_API_KEY "..."`) or Render's environment
-  variable dashboard if using the fallback — never into a committed file.
+- `config.py` must contain **no** token at all. It reads
+  `ENTSOE_API_KEY = os.environ.get("ENTSOE_API_KEY") or None` and `get_client()` raises a clear
+  error when it is missing — an older revision kept a placeholder string there, and that revision is
+  what "keep the placeholder" referred to; the file no longer has one. Real tokens go into FastAPI
+  Cloud's encrypted secret store (`fastapi cloud env set --secret ENTSOE_API_KEY "..."`) or
+  Render's environment variable dashboard if using the fallback — never into a committed file.
+  Verified over the full history:
+  `git log --all -p | grep -icE "(security[_-]?token|api[_-]?key|password|secret)[=:][[:space:]]*[\"'][A-Za-z0-9_-]{16,}"`
+  → **0** matches across 40 commits (2026-11-06T11:28Z; grep exit 1 = no lines matched).
