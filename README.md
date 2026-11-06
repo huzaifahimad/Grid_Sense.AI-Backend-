@@ -181,6 +181,21 @@ The JSON artifact is committed, served at `GET /validation`, and rendered as the
 **Closed-Loop Validation** panel in the dashboard, so a reviewer sees the evidence behind
 each number rather than the number alone.
 
+Every number above is also re-derived by an independent script that does not read the report:
+
+```bash
+python scripts/verify_model_accuracy.py            # 22 checks, incl. a live API comparison
+python scripts/verify_model_accuracy.py --skip-live # 10 checks, no server needed
+```
+
+It recomputes precision, recall, PR-AUC and Brier skill from `data/features/training_features.parquet`
+and the committed classifier, then compares them digit-for-digit with what the deployed API
+returns. It also asserts the properties a leakage bug would break: label agreement 1.000000 across
+51,959 rows, no label-shaped column among the feature inputs, a strictly temporal split, and a
+deployed `risk_score` reproduced to `|delta| = 0` for all three zones. A shuffle-before-split probe
+is run and reported rather than assumed safe — see [`docs/15_Model_Accuracy_Verification.md`](docs/15_Model_Accuracy_Verification.md)
+for what it measures, what it proves weak, and the model comparison it backs.
+
 ---
 
 ## Quick Start (Local)
@@ -263,7 +278,7 @@ Step-by-step guide: [`docs/05_Deployment_Guide.md`](docs/05_Deployment_Guide.md)
 ├── data/
 │   ├── features/            # training_features.parquet (committed)
 │   └── models/              # *.joblib + SHAP JSON + baselines CSV + closed_loop_report.json
-├── docs/                    # 14-document suite (TRD → presentation source)
+├── docs/                    # 15-document suite (TRD → presentation source)
 ├── pyproject.toml           # FastAPI Cloud deploy manifest
 ├── requirements.txt         # Full training dependencies
 └── requirements-api.txt     # Lean serving dependencies
@@ -282,6 +297,7 @@ Step-by-step guide: [`docs/05_Deployment_Guide.md`](docs/05_Deployment_Guide.md)
 | [`08_Testing_Validation_Prompt.md`](docs/08_Testing_Validation_Prompt.md) | 6-phase QA verification prompt |
 | [`13_Closed_Loop_Validation_Update.md`](docs/13_Closed_Loop_Validation_Update.md) | Closed-loop replay method, gate results, and the lead-time correction |
 | [`14_Security_Posture.md`](docs/14_Security_Posture.md) | Measured attack surface, response-header and CORS evidence, dependency audit results, accepted risks |
+| [`15_Model_Accuracy_Verification.md`](docs/15_Model_Accuracy_Verification.md) | Independent re-computation of every accuracy claim, leakage probes, model comparison, and what remains unproven |
 
 ## Related
 
