@@ -5,9 +5,11 @@
 **Repo state:** backend `main` at `dbd2e56`; frontend `main` at `8e01149`.
 **Tool:** `scripts/verify_model_accuracy.py` — 22 checks, exit 0, added with this document.
 
-The two runs printed the same values for all 22 checks, including the deployed
+The three runs printed the same values for all 22 checks, including the deployed
 `risk_score` comparisons that reach `|delta| = 0.000e+00`; the pipeline is
-deterministic across runs, not merely across code paths.
+deterministic across runs, not merely across code paths. A third pass at
+09:54:50 UTC, after these commits reached `main` and FastAPI Cloud rolled, again
+returned 22 passed / 0 failed against the deployed backend.
 
 Every number below was printed by that script or by the single comparison run in
 §4 on the date above, against the committed artifacts. Nothing is quoted from a
