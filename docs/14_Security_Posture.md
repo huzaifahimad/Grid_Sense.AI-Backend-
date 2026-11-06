@@ -43,7 +43,8 @@ detail: No data for zone 'AAAA…'. Known zones: ['ES', 'GR', 'IT_SOUTH']
 ```
 
 Covered by `test_unknown_zone_rejection_echoes_only_a_bounded_prefix` in
-`tests/test_api.py`, parametrized across all three zone routes.
+`tests/test_api.py`, parametrized across all three zone routes. Re-probed against the
+deployed app after the push: identical 104-byte body, long run absent.
 
 The zone set is closed (`ENTSOE_ZONES`), so a near-miss is never worth echoing in full —
 the response already lists the valid zones.
@@ -82,6 +83,10 @@ cache-control: no-store
 
 `test_every_response_carries_security_and_nocache_headers` asserts all six on `/`, `/health`,
 `/validation`, `/assets`, `/forecast/ES`, `/risk/ES`, `/shed-schedule/ES` and `/docs`.
+
+**Verified in production, not just locally.** After the push rolled the deployment, the same
+eight routes were re-probed live at 09:05 UTC on 2026-11-06: every one returned 200 with
+`missing=none` for all six headers.
 
 **Two deliberate omissions, stated rather than quietly skipped.** No CSP `default-src`:
 `/docs` and `/redoc` are served by this same app and need inline scripts, so a strict
@@ -178,6 +183,19 @@ may be running — and is left as an explicit decision.
 deprecation in the test client, not in product code). The two tests added by this pass are
 `test_every_response_carries_security_and_nocache_headers` and
 `test_unknown_zone_rejection_echoes_only_a_bounded_prefix`.
+
+CI on commit `b8c5651` completed with `conclusion=success`, and the per-step record proves the
+new gate executed rather than being skipped:
+
+```
+4. Dependency advisory audit (OSV)      success
+6. Run python -m pytest tests -q        success
+```
+
+The CI pytest pass is the stronger of the two results. That runner installs the declared pins
+from scratch, so it is the first evidence that the suite passes against fastapi 0.141.1 and
+pandas 3.0.2 rather than the drifted local versions in §6.1 — which is exactly the distinction
+the drift check exists to make visible.
 
 ## 9. What remains, in order of value
 
