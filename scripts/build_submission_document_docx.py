@@ -32,9 +32,11 @@ from build_audit_report_pdf import (  # noqa: E402
     FRONTEND_REPO,
     SITE,
     curl_json,
+    currency_cause,
     http_code,
     refresh_label,
     refresh_state,
+    sent,
     sh,
 )
 
@@ -454,7 +456,7 @@ def main() -> int:
     doc.add_paragraph(
         f"Request path: the browser calls GET-only endpoints; the API loads the committed feature "
         f"frame and artifacts at startup and answers /forecast, /risk and /shed-schedule from "
-        f"them. {refresh_label(rs).capitalize()}. {bounds}"
+        f"them. {sent(refresh_label(rs))}. {bounds}"
     )
     doc.add_paragraph(
         f"Documents and reports in this submission are generated from the same running system: "
@@ -492,12 +494,11 @@ def main() -> int:
     for line in (report.get("limitations") or []):
         doc.add_paragraph(str(line), style="List Bullet")
     doc.add_paragraph(
-        f"Data currency. {refresh_label(rs).capitalize()}"
+        f"Data currency. {sent(refresh_label(rs))}"
         + ("" if rs["publishing"] else
            f", so the newest served hour stays {load_latest} and ages one hour per hour; "
            f"/health reports that age honestly instead of presenting the frame as current. "
-           f"The cause is upstream of this repository: the deployed ENTSO-E token is rejected, "
-           f"which is a platform secret-store state, not a code defect.")
+           f"{currency_cause(rs)}")
     )
     doc.add_paragraph(
         "Target geography. The validated zones are European bidding zones standing in for "
@@ -519,11 +520,23 @@ def main() -> int:
             f"Observe one row-producing refresh end to end on the live host - currently in "
             f"progress: {rs['rows']:,} rows published since boot.")
     else:
-        roadmap.append(
-            "Replace the rejected ENTSO-E token in the platform secret store, or set "
-            "GRIDSENSE_REFRESH=false and stop spending a fetch attempt per cache window on a "
-            "credential that cannot succeed. Success is /health.data_refresh.last_success_at "
-            "becoming non-null and rows_added_total moving, then the served newest hour advancing.")
+        if not rs["enabled"]:
+            roadmap.append(
+                f"Re-enable the request-time refresher in the deployment environment, or leave it "
+                f"off deliberately and state that in the docs. Measured now: {refresh_label(rs)}.")
+        elif rs["unauthorized"]:
+            roadmap.append(
+                "Replace the ENTSO-E token in the platform secret store with one whose RESTful-API "
+                f"access is approved - {rs['unauthorized']}/{len(rs['zones'])} zones answered 401 "
+                "Unauthorized on this /health build - or set GRIDSENSE_REFRESH=false and stop "
+                "spending a fetch attempt per cache window on a credential that cannot succeed. "
+                "Success is /health.data_refresh.last_success_at becoming non-null and "
+                "rows_added_total moving, then the served newest hour advancing.")
+        else:
+            roadmap.append(
+                "Make one refresh pass publish. The live /health data_refresh block names the "
+                f"measured reason per zone with the token redacted; read it before changing code. "
+                f"Measured now: {refresh_label(rs)}.")
     roadmap += [
         "Swap joblib artifacts for a non-code-executing format - the one accepted risk that "
         "could become code execution.",
