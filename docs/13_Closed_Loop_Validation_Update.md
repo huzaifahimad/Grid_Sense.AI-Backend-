@@ -62,10 +62,16 @@ Nothing is measured on a training harness that the deployed system never touches
 
 ## 2. Method
 
-**Replay window.** The untouched test split: 2026-04-14 20:00 UTC → 2026-09-06 10:00 UTC,
-3,471 zone-hours, 10,413 scored rows, three zones (ES · GR · IT_SOUTH). Origins are hourly
-(10,341 of them) with a 24-hour horizon; the first origins begin before the window so that
-in-window forecasts have full lag history and are not warm-starting.
+**Replay window.** The untouched test split, as published live by `GET /validation → window`:
+2026-06-13 10:00 UTC → 2026-11-04 17:00 UTC — **10,122 scored rows** across the three zones
+(ES · GR · IT_SOUTH) over **3,464 elapsed hours**. Origins are hourly at a 24-hour horizon
+(**10,050 replayed**, 1-hour stride); the first origins begin before the window so that
+in-window forecasts have full lag history and are not warm-starting. There are 2 hourly gaps
+in ES and none in GR or IT_SOUTH. This window is the current one and moves whenever the feature
+frame is rebuilt, so the endpoint is the authority rather than this paragraph — the earlier
+2026-11-03 replay described in §3 ran over 2026-04-14 20:00 → 2026-09-06 10:00 UTC
+(3,471 zone-hours, 10,413 scored rows, 10,341 origins) on the frame committed before the
+real-data rebuild.
 
 **Serving path, not a research path.** The replay calls the same `recursive_forecast`,
 `apply_intervals`, and risk-classifier code that `api/main.py` imports. Feature construction,
@@ -173,8 +179,12 @@ suite, injecting deliberately broken models into the same replay:
 
 | Control | Injected fault | Gate response |
 |---|---|---|
-| Inflated forecaster | every prediction × 1.15 | P10–P90 coverage **0.842 → 0.0002** on the same replay configuration, `band_coverage` **FAIL**, overall **FAIL** |
-| Always-shed classifier | alarms on **all 10,413** scored hours | precision collapses to the base rate (**0.1095**), burden rises **0.33 → 21.37** false alarms per zone-day, `alarm_precision` and the burden gate **FAIL** — while `alarm_recall` correctly still **PASSes** at 1.0, overall **FAIL** |
+| Inflated forecaster | every prediction × 1.15 | P10–P90 coverage **0.8556 → 0.0003** on the same coarse-stride replay configuration, `band_coverage` **FAIL**, overall **FAIL** (the shipped hourly replay records 0.8492) |
+| Always-shed classifier | alarms on **all 10,122** scored hours | precision collapses to **0.1265** — byte-identical to the shipped report's own overload base rate, which is the point: an always-alarming model buys exactly the base rate — burden rises to **20.97** false alarms per zone-day against a 5.0 gate target (the shipped hourly replay records 0.313), `alarm_precision` and the burden gate **FAIL** — while `alarm_recall` correctly still **PASSes** at 1.0, overall **FAIL** |
+
+Re-measured on the current frame at 2026-11-06T13:47Z by
+`python -m pytest tests/test_closed_loop.py -k negative_control -q`, which runs both injections
+through the same replay the shipped report uses.
 
 The second control is the one worth noting: recall stays perfect while precision and burden
 fail. Scoring alarms on recall alone would have certified a device that cries wolf every hour —
@@ -248,7 +258,7 @@ cd Grid_Sense.AI-Backend- && git checkout main
 pip install -r requirements.txt
 
 python -m models.closed_loop_validation --strict   # ~15 s, rewrites data/models/closed_loop_report.json
-python -m pytest tests -q                          # 59 tests, incl. both negative controls
+python -m pytest tests -q                          # 94 tests, incl. both negative controls
 uvicorn api.main:app --port 8000
 curl http://localhost:8000/validation
 ```

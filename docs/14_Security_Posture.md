@@ -221,9 +221,9 @@ may be running — and is left as an explicit decision.
 
 ## 8. Test evidence
 
-`python -m pytest tests -q` on 2026-11-06T11:21Z: **90 passed**, 1 warning (an httpx `app=`
-deprecation in the test client, not in product code). The 63-test run recorded earlier the same day
-has since grown by `tests/test_live_refresh.py` (27 tests), which is where the security-relevant
+`python -m pytest tests -q` on 2026-11-06T13:39Z: **94 passed**, 1 warning (an httpx `app=`
+deprecation in the test client, not in product code). The 63-test run recorded earlier in the
+project has since grown by `tests/test_live_refresh.py` (31 tests), which is where the security-relevant
 coverage of the new egress path lives:
 
 - `test_the_refresh_client_really_calls_the_http_layer` — real entsoe-py client, only
@@ -236,10 +236,11 @@ coverage of the new egress path lives:
 - `test_egress_failure_leaves_the_frame_serving` — a failed fetch changes nothing the caller sees.
 - `test_cache_window_blocks_the_next_kick` — request volume cannot amplify egress.
 
-**Version coverage.** Those 90 tests also pass on the stack the deployment actually installs, not
+**Version coverage.** The suite also passes on the stack the deployment actually installs, not
 only on this machine's drifted versions. An isolated venv built from `requirements-api.txt` verbatim
 (pandas 3.0.2, numpy 2.4.4, requests 2.34.2, fastapi 0.141.1, pyarrow 25.0.1, scikit-learn 1.8.0,
-lightgbm 4.7.0) ran the same suite: **90 passed** (2026-11-06T11:27:24Z), and
+lightgbm 4.7.0) ran the same suite: **94 passed** (re-measured 2026-11-06T13:43:03Z; the same venv
+gave **90 passed** at the 11:27:24Z checkpoint, before the four refresh tests were added), and
 `scripts/verify_model_accuracy.py --skip-live` returned **10 checks / 10 passed / 0 failed**
 (2026-11-06T11:28:42Z) with per-zone figures identical to the ones recorded in
 `docs/15_Model_Accuracy_Verification.md` (GR precision 0.8601 / recall 0.9318, IT_SOUTH recall

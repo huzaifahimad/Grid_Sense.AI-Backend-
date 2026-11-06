@@ -60,10 +60,11 @@ retraining and a fresh validation run.
 > See [`docs/04_Pipeline_Documentation.md`](docs/04_Pipeline_Documentation.md) and
 > `GET /validation` before citing any accuracy number.
 
-**Tests:** `python -m pytest tests -q` — 59 tests covering endpoint contracts, train/serve
-feature parity, label-leak guard, interval calibration, the lean serving import path, and
-the closed-loop validator (gate grading, lead-time math, and negative controls that prove
-the gates fail when they should).
+**Tests:** `python -m pytest tests -q` — 94 tests covering endpoint contracts, train/serve
+feature parity, label-leak guard, interval calibration, the lean serving import path, the
+request-time refresh path (credential redaction, the egress budget, and the fallback that keeps
+the committed frame serving when a fetch fails), and the closed-loop validator (gate grading,
+lead-time math, and negative controls that prove the gates fail when they should).
 
 ---
 
