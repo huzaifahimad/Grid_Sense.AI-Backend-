@@ -366,6 +366,104 @@ def test_unparseable_tail_is_rejected_not_published(clean_state, committed, monk
 
 
 # ------------------------------------------------------------
+# The real entsoe-py client, with only the socket stubbed
+#
+# Every test above replaces pull_load wholesale, which is precisely the blind spot
+# that let a dead configuration reach a commit: entsoe-py's @retry runs
+# `for _ in range(self.retry_count)` with a bare `raise error` in the for/else, so
+# retry_count=0 performs no request at all and raises
+# "TypeError: exceptions must derive from BaseException". Our own code looks
+# perfectly healthy from the outside — the API is simply never called.
+
+
+def test_the_refresh_client_really_calls_the_http_layer(monkeypatch):
+    import requests
+    from ingestion.entsoe_client import get_client, pull_load
+
+    monkeypatch.setattr("ingestion.entsoe_client.ENTSOE_API_KEY", "test-token")
+    client = get_client(timeout=1, retry_count=lr.ENTSOE_ATTEMPTS,
+                        retry_delay=lr.ENTSOE_ATTEMPT_DELAY_SECONDS)
+    seen = []
+
+    def fake_get(url, params=None, **kwargs):
+        seen.append(params)
+        raise requests.ConnectionError(f"stub: refused to reach {url}")
+
+    monkeypatch.setattr(client.session, "get", fake_get)
+    start = pd.Timestamp("2026-11-05", tz="UTC")
+    with pytest.raises(RuntimeError) as exc:
+        pull_load("10YES-REE------0", "ES", start, start + pd.Timedelta(hours=6),
+                  client=client, backfill=False, verbose=False)
+
+    assert len(seen) == 1, "the refresh configuration produced zero HTTP attempts"
+    assert "securityToken" in seen[0], "the token belongs in the query string"
+    cause = str(exc.value)
+    assert "ConnectionError" in cause, cause
+    assert "TypeError" not in cause, "entsoe-py never reached the network"
+
+
+# ------------------------------------------------------------
+# /health publishes failure reasons — never the credential
+
+
+def test_published_error_never_carries_the_token(clean_state, committed, monkeypatch):
+    """
+    entsoe-py sends the token as a query parameter and requests/urllib3 quote the
+    full URL into the exception text this module stores, so the natural place an
+    operator looks for a failing pull is exactly where the credential appears.
+    The string below is the shape actually captured from the running process on
+    2026-11-06; the fake key is the value that must disappear, which makes the
+    assertion about the credential rather than about a substring picked to pass.
+    """
+    import ingestion.entsoe_client as ec
+
+    secret = "9f3c1a77e0b54d2f"
+    monkeypatch.setattr(lr, "ENTSOE_API_KEY", secret)
+    monkeypatch.setattr(ec, "get_client", lambda **kw: object())
+
+    def refused(*a, **k):
+        raise RuntimeError(
+            "ENTSO-E returned no data at all for ES (10YES-REE------0); first failure: "
+            "ConnectionError: HTTPSConnectionPool(host='web-api.tp.entsoe.eu', "
+            "port=443): Max retries exceeded with url: /api?domain=10YES-REE------0"
+            f"&processType=A01&securityToken={secret}&offset=0&limit=1000 (Caused by "
+            "NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7f8'>: "
+            "Failed to establish a new connection: [Errno 111] Connection refused'))")
+
+    monkeypatch.setattr(ec, "pull_load", refused)
+
+    published = []
+    clean_state.run_refresh(_stale_frame(committed), published.append)
+
+    assert secret not in str(clean_state.status()), \
+        "the refresh reason reached /health verbatim"
+    reason = clean_state.status()["zones"][ZONE]["last_error"]
+    assert "Connection refused" in reason, "the cap kept the URL and dropped the cause"
+    assert len(reason) <= len("RuntimeError: ") + 300
+    assert published == []
+
+
+def test_redaction_runs_before_the_length_cap():
+    """
+    Truncate first and the '&' that terminates the token parameter can fall off the
+    end, leaving a value the pattern no longer recognises. Asserting the wrong order
+    leaks is what keeps this test from passing for no reason.
+    """
+    head = "https://web-api.tp.entsoe.eu/api?offset=0&securityToken=" + "Z" * 40
+    assert "Z" in head[:96], "premise: a raw slice keeps part of the token"
+    assert "Z" not in lr._error_text(RuntimeError(head), 96)
+
+
+@pytest.mark.parametrize("param", ["securityToken", "security_token", "api_key", "TOKEN"])
+def test_credential_pattern_covers_the_parameter_spellings_used(param):
+    from config import redact_secrets
+
+    out = redact_secrets(f"GET /api?domain=X&{param}=super-secret-value&offset=0")
+    assert "super-secret-value" not in out
+    assert out.endswith("&offset=0")
+
+
+# ------------------------------------------------------------
 # Through the API
 
 

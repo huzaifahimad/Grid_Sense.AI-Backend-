@@ -66,6 +66,7 @@ from config import (
     ENTSOE_ZONES,
     OVERLOAD_THRESHOLD_RATIO,
     ZONE_COORDINATES,
+    redact_secrets,
 )
 from features.build_features import (
     add_cyclic_time_features,
@@ -86,6 +87,15 @@ FRAME_COLS = [*WEATHER_COLS, PRECIP_COL]
 # label threshold, so an out-of-band tail is rejected and reported instead.
 PLAUSIBLE_MIN_MULTIPLE = 0.25
 PLAUSIBLE_MAX_MULTIPLE = 4.0
+
+# One real attempt, no sleeping between attempts. retry_count cannot be 0:
+# entsoe-py 0.8.0 wraps the request in `for _ in range(self.retry_count)` with a
+# bare `raise error` in the for/else, so zero iterations never performs the call and
+# dies with "TypeError: exceptions must derive from BaseException" instead. Measured
+# live 2026-11-06 — the whole refresh path looked configured but fetched nothing.
+# The delay is 0 because the fallback is the committed frame, not a retry.
+ENTSOE_ATTEMPTS = 1
+ENTSOE_ATTEMPT_DELAY_SECONDS = 0
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -183,6 +193,27 @@ def _as_utc(value) -> pd.Timestamp:
     """
     ts = pd.Timestamp(value)
     return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+
+def _error_text(exc: BaseException, limit: int) -> str:
+    """
+    "ExceptionType: message" for /health, credential stripped, middle elided.
+
+    Redaction comes first, never last: slicing can drop the "&" that terminates the
+    token parameter, and then the pattern no longer matches and part of the
+    credential is published anyway.
+
+    Over-cap text loses its middle rather than its tail because a real requests/
+    urllib3 message carries the request URL mid-string and the actual cause
+    ("... (caused by NewConnectionError('Connection refused'))") at the end.
+    Head-truncating it leaves "Max retries exceeded" and throws away the one part
+    that separates a refused connection from a rejected token.
+    """
+    message = redact_secrets(str(exc))
+    if len(message) > limit:
+        head = (limit - 3) // 2
+        message = message[:head] + "..." + message[-(limit - head - 3):]
+    return f"{type(exc).__name__}: {message}"
 
 
 def reset_state() -> None:
@@ -420,7 +451,7 @@ def _refresh_zone(zone: str, zone_frame: pd.DataFrame, end: datetime,
         except Exception as e:
             # Weather is optional; the appended load hours land in the frame's
             # existing "unavailable" bucket and the no-weather fallback serves them.
-            entry["weather_error"] = f"{type(e).__name__}: {str(e)[:120]}"
+            entry["weather_error"] = _error_text(e, 120)
     candidate, reason = build_candidate(
         zone_frame, new_load, weather if len(weather) else None)
     entry["outcome"] = reason
@@ -451,10 +482,10 @@ def run_refresh(current: pd.DataFrame, publish: Callable[[pd.DataFrame], None],
     try:
         from ingestion.entsoe_client import get_client
 
-        # retry_count=0 because the fallback is a committed frame, not a retry:
-        # entsoe-py's default 3 retries x 10s delay would hold a thread for half a
-        # minute per zone to no extra purpose.
-        client = get_client(timeout=int(config.timeout_seconds), retry_count=0)
+        # One attempt, no delay. Not zero attempts: see ENTSOE_ATTEMPTS.
+        client = get_client(timeout=int(config.timeout_seconds),
+                            retry_count=ENTSOE_ATTEMPTS,
+                            retry_delay=ENTSOE_ATTEMPT_DELAY_SECONDS)
         end = now.replace(minute=0, second=0, microsecond=0)
         frames = {str(z): f for z, f in current.groupby("zone")}
         budget = timedelta(seconds=config.timeout_seconds * 3)
@@ -481,7 +512,7 @@ def run_refresh(current: pd.DataFrame, publish: Callable[[pd.DataFrame], None],
                         seconds=config.quiet_after_no_gain_seconds)).isoformat()
             except Exception as e:
                 entry = {"outcome": "failed",
-                         "last_error": f"{type(e).__name__}: {str(e)[:160]}"}
+                         "last_error": _error_text(e, 300)}
                 entry["retry_after"] = (now + timedelta(
                     seconds=config.quiet_after_no_gain_seconds)).isoformat()
                 log.warning("live refresh failed for zone %s: %s", zone, entry["last_error"])
@@ -506,7 +537,7 @@ def run_refresh(current: pd.DataFrame, publish: Callable[[pd.DataFrame], None],
                  len(updated), added)
         return outcomes
     except Exception as e:
-        message = f"{type(e).__name__}: {str(e)[:200]}"
+        message = _error_text(e, 200)
         with _lock:
             _status["in_flight"] = False
             _status["last_attempt_at"] = _now().isoformat()
@@ -570,4 +601,4 @@ def kick_if_due(current: Optional[pd.DataFrame],
     except Exception as e:
         with _lock:
             _status["in_flight"] = False
-            _status["last_error"] = f"{type(e).__name__}: {str(e)[:160]}"
+            _status["last_error"] = _error_text(e, 160)

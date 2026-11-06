@@ -6,6 +6,7 @@ Everything else in the pipeline reads from here.
 """
 
 import os
+import re
 from pathlib import Path
 
 # ============================================================
@@ -14,12 +15,26 @@ from pathlib import Path
 # Get this from: transparency.entsoe.eu -> My Account -> Web API Security Token
 # (only appears after ENTSO-E approves your "Restful API access" request).
 # Set it as ENTSOE_API_KEY in your shell / .env / Render dashboard / Vercel env.
-# Do not paste the token into this file — it is committed to git.
-# If ENTSOE_API_KEY is not set in the environment, leave this as None.
-# entsoe_client.get_client() will raise a clear error telling you to set it —
-# never paste a real token here, since this file is committed to git.
+# This file is committed to git, so the token lives in the environment only;
+# entsoe_client.get_client() raises a clear error when it is missing.
 ENTSOE_API_KEY = os.environ.get("ENTSOE_API_KEY") or None
 # ============================================================
+
+
+# ------------------------------------------------------------
+# Log/response hygiene
+# ------------------------------------------------------------
+# requests/urllib3 exception messages quote the request URL, and entsoe-py carries
+# the token inside that URL's query string. The request-time refresher publishes
+# exception text on /health, so the rule has to exist once, in the one module both
+# the ingestion client and the API already import.
+_CREDENTIAL_IN_URL = re.compile(
+    r"(?i)(security[_-]?token|token|api[_-]?key)=([^&\s'\"]+)")
+
+
+def redact_secrets(text: str) -> str:
+    """Strip credential-shaped query parameters from arbitrary message text."""
+    return _CREDENTIAL_IN_URL.sub(r"\1=[REDACTED]", str(text))
 
 # NASA POWER needs no key — public API
 NASA_POWER_BASE_URL = "https://power.larc.nasa.gov/api/temporal/hourly/point"

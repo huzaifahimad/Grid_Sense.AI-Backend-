@@ -231,8 +231,33 @@ Full run order and real-vs-synthetic breakdown:
 
 | Variable | Where | Required | Purpose |
 |---|---|---|---|
-| `ENTSOE_API_KEY` | FastAPI Cloud secret store / local shell | Only for real-data ingestion | ENTSO-E Transparency Platform API token. **Never commit it** — `config.py` reads it from the environment only. |
+| `ENTSOE_API_KEY` | FastAPI Cloud secret store / local shell | Yes for live data; optional for predictions | ENTSO-E Transparency Platform API token. **Never commit it** — `config.py` reads it from the environment only. Since the request-time refresh landed, this key is used by the **serving** process too, not only by offline ingestion: `/health` and the forecast endpoints kick a background pull that extends the served frame. Without it the API still answers, from the committed frame. |
 | `CORS_ORIGINS` | FastAPI Cloud environment | Optional | Comma-separated exact frontend origins, for example `https://your-project.vercel.app`. Unset does **not** mean open CORS: `api/main.py` falls back to the single hardcoded origin `https://grid-senseai.vercel.app`. Measured 2026-11-06 against both live and local with the variable unset — that origin is echoed in `access-control-allow-origin`, `https://evil.example.com` gets no CORS header at all, and `POST /health` returns 405 because only `GET` is allowed. No credentials are permitted. |
+
+### Request-time refresh knobs
+
+Every one of these is read **once, at import time** (`api/live_refresh.py`
+evaluates `RefreshConfig.from_env()` at module level), so changing a value means
+restarting the process — on FastAPI Cloud, a redeploy. Defaults are the values
+the deployed app runs with. `/health` → `data_refresh` reports the live effective
+values, so you can confirm what a deployment actually picked up instead of
+inferring it from the env.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GRIDSENSE_REFRESH` | `true` | Master switch. `false` serves the committed frame only — no outbound ENTSO-E or weather calls at all. |
+| `GRIDSENSE_REFRESH_STALE_HOURS` | `3.0` | A zone is only eligible for a pull once its newest observed hour is older than this (`_zones_due`). ENTSO-E publishes actual load behind wall clock, so a smaller number buys no fresher data and costs requests for nothing. Independent of the `cache_seconds` gate, which is process-wide. |
+| `GRIDSENSE_REFRESH_CACHE_SECONDS` | `900` | Minimum seconds between refresh attempts. The gate is process-wide — `kick_if_due` compares `last_attempt_at` against this before checking which zones are due — so a busy page cannot hammer the SOP endpoint. Kept ≥60 deliberately; `/health` asserts it. |
+| `GRIDSENSE_REFRESH_QUIET_SECONDS` | `3600` | Backoff after an attempt that added zero rows — usually means the upstream simply has not published yet, and retrying every 15 minutes would only burn requests. |
+| `GRIDSENSE_REFRESH_MAX_TAIL_HOURS` | `336` | Cap on how many hours one refresh will try to append (14 days), so a large gap is closed in bounded work rather than in one unbounded call. |
+| `GRIDSENSE_REFRESH_TIMEOUT_SECONDS` | `12.0` | Per-request socket timeout for the refresh path. It cannot inherit entsoe-py's defaults: 3 retries × 10 s would hold a thread ~2 min for nothing, since the fallback is the committed frame. The refresher makes **one** attempt with **zero** delay between attempts. |
+| `GRIDSENSE_REFRESH_KEEP_ROWS` | `500` | Rows kept per zone after a merge. Deliberately above the 336 the API loads at startup, so a refresh never drops history another endpoint relies on, while still bounding memory on a long-lived process. Trims the in-memory frame only — committed Parquet is never rewritten. |
+| `GRIDSENSE_REFRESH_WEATHER` | `true` | Whether the refresh also pulls NASA POWER weather. No key required. |
+| `GRIDSENSE_REFRESH_WEATHER_MAX_DAYS` | `4.0` | Calendar days of weather per pull (the window is day-bounded). Reanalysis publishes roughly two days behind, so this usually cannot fill the blind tail — the no-weather fallback model is the shipped answer for that gap; the pull does recover hours that were simply never fetched. |
+
+Numeric knobs are validated on read: a non-numeric or non-positive value logs a
+warning and falls back to the default rather than disabling the gate or
+spinning the refresher.
 
 Set it on FastAPI Cloud:
 
@@ -240,8 +265,13 @@ Set it on FastAPI Cloud:
 fastapi cloud env set --secret ENTSOE_API_KEY "your-token"
 ```
 
-The serving API itself runs **without** this key — predictions come from committed
-model artifacts, not live ENTSO-E pulls.
+With the key **unset**, the serving API still works — predictions come from
+committed model artifacts and the committed data frame, and every endpoint keeps
+answering — but the served frame stops advancing and `/health` reports the refresh
+as disabled/failed rather than silently serving ever-older data. With the key
+**set**, the serving process performs the outbound ENTSO-E pull itself, in a
+background thread that never blocks a request; a failed pull falls back to the
+committed frame and never publishes a partial one.
 
 ---
 

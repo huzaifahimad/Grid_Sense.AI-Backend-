@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 import pandas as pd
-from config import ENTSOE_API_KEY, ENTSOE_ZONES, DATA_RAW_DIR
+from config import ENTSOE_API_KEY, ENTSOE_ZONES, DATA_RAW_DIR, redact_secrets
 
 try:
     from entsoe import EntsoePandasClient
@@ -28,15 +28,21 @@ except ImportError:
 MAX_BACKFILL_DAYS = 120
 
 
-def get_client(timeout: int | None = None,
-               retry_count: int | None = None) -> "EntsoePandasClient":
+def get_client(timeout: int | None = None, retry_count: int | None = None,
+               retry_delay: int | None = None) -> "EntsoePandasClient":
     """
     Build an ENTSO-E client.
 
-    timeout/retry_count exist for the request-time refresh path, which cannot
-    inherit the offline pull's defaults: retry_count=3 with retry_delay=10 means
-    a dead endpoint costs ~2 minutes before raising, and the serving process
-    would rather fall back to the committed frame inside a few seconds.
+    timeout/retry_count/retry_delay exist for the request-time refresh path, which
+    cannot inherit the offline pull's defaults (3 retries x 10s = ~2 minutes before
+    raising, holding a thread to no extra purpose when the fallback is a committed
+    frame). Pass retry_count=1 with retry_delay=0 for a single real attempt.
+
+    Never pass retry_count=0. entsoe-py 0.8.0 decorates _base_request with
+    `for _ in range(self.retry_count): ... else: raise error`, so zero iterations
+    means the request is never performed and the call dies with
+    "TypeError: exceptions must derive from BaseException" (error is still None).
+    Measured live on 2026-11-06 through this exact code path.
     """
     if not ENTSOE_API_KEY:
         raise ValueError(
@@ -48,6 +54,8 @@ def get_client(timeout: int | None = None,
         kwargs["timeout"] = timeout
     if retry_count is not None:
         kwargs["retry_count"] = retry_count
+    if retry_delay is not None:
+        kwargs["retry_delay"] = retry_delay
     return EntsoePandasClient(api_key=ENTSOE_API_KEY, **kwargs)
 
 
@@ -92,7 +100,8 @@ def pull_load(zone_code: str, country_code: str, start: pd.Timestamp, end: pd.Ti
         try:
             result = client.query_load(zone_code, start=chunk_start, end=chunk_end)
         except Exception as e:
-            failed.append((chunk_start.strftime("%Y-%m"), f"{type(e).__name__}: {str(e)[:80]}"))
+            failed.append((chunk_start.strftime("%Y-%m"),
+                           f"{type(e).__name__}: {redact_secrets(str(e))[:80]}"))
             result = None
         if result is not None and len(result):
             series = result.iloc[:, 0] if hasattr(result, "columns") else result
@@ -100,7 +109,12 @@ def pull_load(zone_code: str, country_code: str, start: pd.Timestamp, end: pd.Ti
         chunk_start = chunk_end + pd.Timedelta(hours=1)
 
     if not chunks:
-        raise RuntimeError(f"ENSO-E returned no data at all for {country_code} ({zone_code})")
+        # The cause is what distinguishes a refused connection from a rejected token
+        # from a period that genuinely has no publication, and the refresh path reports
+        # this text straight to /health — without it, all three look identical.
+        cause = f"; first failure: {failed[0][1]}" if failed else ""
+        raise RuntimeError(f"ENTSO-E returned no data at all for "
+                           f"{country_code} ({zone_code}){cause}")
 
     # Convert before resampling: civil->UTC is injective, so the autumn DST
     # repeat hour becomes two distinct UTC hours instead of collapsing.

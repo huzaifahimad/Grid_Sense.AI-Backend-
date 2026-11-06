@@ -18,14 +18,41 @@ it says absent. Where a risk is **accepted**, it says accepted and why.
 | Routes | 7 read-only GET endpoints + `/docs`, `/redoc`, `/openapi.json` | `GET /openapi.json` |
 | Methods | `POST /health` → **405** | `curl -X POST …/health` |
 | Write paths | None. No upload, no admin, no auth, no user input persisted | read `api/main.py` route decorators |
-| Request-time egress | **Zero.** No `requests`/`httpx`/`urllib`/socket import anywhere in `api/` or the two modules the serving path calls | `grep -rnE "requests\|httpx\|urllib" api/ models/forecasting.py` |
-| Secrets in 28 commits of history | None matched AWS key, PEM header, JWT, or assigned-token patterns | `git log --all -p` + the grep in §6 |
+| Request-time egress | **Bounded, no longer zero** (changed 2026-11-06, `f78b76e`). `api/live_refresh.py` fetches the missing ENTSO-E tail, plus NASA POWER when enabled, from a background thread it starts at most once per cache window. Two fixed destinations: the ENTSO-E host compiled into `entsoe-py` and `config.NASA_POWER_BASE_URL`. | `GET /health` → `data_refresh.{attempts,last_success_at,last_error,zones}` |
+| Secrets in 38 commits of history | None matched AWS key, PEM header, JWT, or assigned-token patterns (re-run 2026-11-06T11:06Z, 0 matches) | `git log --all -p \| grep -icE "(AKIA[0-9A-Z]{16}\|BEGIN (RSA \|EC \|OPENSSH )?PRIVATE KEY\|eyJ\[A-Za-z0-9_-\]{20,\}\.eyJ\|securityToken=\[0-9a-f\]{32})"` |
 | Path traversal | `/../etc/passwd` → 404, `/%2e%2e/%2e%2e/etc/passwd` → 404 | `curl -i` both |
 
-The zero-egress property is the single most valuable structural control here. The API reads
-its data from artifacts committed in the repo at startup and makes no outbound call while
-serving a request, so there is no SSRF surface, no credential sent on the request path, and
-no upstream that can be coaxed into answering on an attacker's behalf.
+The row above previously read "Zero" and was checked with
+`grep -rnE "requests\|httpx\|urllib" api/ models/forecasting.py`. That command still
+returns nothing after the change, which is exactly why it was dropped as evidence:
+`api/live_refresh.py` imports the egress modules lazily, inside the functions that need
+them, so a source-text grep over `api/` cannot see the outbound call. A check that passes
+while the property it claims is false is worse than no check, because it reads like
+verification.
+
+What still holds, and what the new bound rests on:
+
+* **No request input reaches the destination.** The threads fetch the zones already
+  present in the served frame (`config.ENTSOE_ZONES` keys), never the `{zone}` from the
+  request path, so there is no SSRF surface reachable over HTTP. This bound is weaker than
+  the zero-egress property it replaces and its gap is listed in §5: entsoe-py resolves its
+  endpoint as `os.getenv("ENTSOE_ENDPOINT_URL") or "https://web-api.tp.entsoe.eu/api"`, so
+  the destination is fixed against network attackers but movable by anyone who can already
+  set the process environment.
+* **The token is sent to one destination, as a query parameter.** `ENTSOE_API_KEY` goes
+  over HTTPS to the host above as `securityToken`; NASA POWER needs no key. That query
+  parameter is the reason the environment-variable override matters and is recorded as an
+  accepted risk in §5, not argued away here.
+* **Request volume cannot amplify egress.** One refresh per process per
+  `GRIDSENSE_REFRESH_CACHE_SECONDS` (default 900 s), one concurrent refresh per process,
+  and a three-zone deadline of `timeout_seconds × 3`. Measured by
+  `test_cache_window_blocks_the_next_kick`, which asserts the second request in the window
+  never reaches `pull_load`.
+* **`/health` cannot be used to trigger it.** The readiness route deliberately does not
+  call the refresher, so an unauthenticated probe loop spends no egress budget.
+* **A failed or blocked fetch is invisible to callers.** Every path falls back to the
+  committed frame; the failure is recorded in `data_refresh`, not returned as a 5xx.
+  Verified by `test_egress_failure_leaves_the_frame_serving`.
 
 ## 2. Fixed: reflected input was unbounded
 
@@ -107,9 +134,15 @@ own pins every sibling subdomain to HTTPS for months on someone else's behalf.
   horizon bounds worst-case compute per request.
 - **No auth to weaken.** Every endpoint is intentionally public read-only; there is no session,
   token, or password in the request path to leak, brute-force, or mis-validate.
-- **Secret handling.** `config.py` reads `ENTSOE_API_KEY` from the environment only. It is used
-  by ingestion scripts and never by the serving path, so the deployed API does not need it at
-  request time.
+- **Secret handling.** `config.py` reads `ENTSOE_API_KEY` from the environment only, and it is now
+  used on the serving path too: `api/live_refresh.py` needs it to fetch the missing tail. Because
+  that same module publishes exception text on `/health`, and entsoe-py carries the token in the
+  query string that requests/urllib3 quote into those messages, `config.redact_secrets` strips
+  credential-shaped parameters and every stored message passes through it **before** the length cap
+  (a cap applied first can drop the `&` that terminates the parameter and leave half a token).
+  Verified by `test_published_error_never_carries_the_token`, which asserts on the real token value
+  inside a message copied from the live failure payload, and by
+  `test_redaction_runs_before_the_length_cap`.
 
 ## 5. Accepted risks — explicit, with the condition that would change the answer
 
@@ -120,6 +153,7 @@ own pins every sibling subdomain to HTTPS for months on someone else's behalf.
 | Pickle deserialization of committed `.joblib` artifacts (api/main.py:105,112,119) | **Accepted, with a real caveat** | `joblib.load` executes arbitrary code contained in the file. There is no upload endpoint, so the only way to exploit it is to commit a malicious artifact — which means **write access to this repo is equivalent to code execution on the serving host**. Mitigation is review discipline: `scripts/verify_prediction_integrity.py` reproduces served values from the committed artifacts (33/33 checks), which catches a swapped artifact that predicts wrong but not one carrying a payload. Moving to a format without code execution (`safetensors`, ONNX, PMML) is the structural fix. |
 | Rate limiting not implemented in app | **Accepted at this tier** | The platform sits a WAF in front (measured: it 403s unrecognized user agents). No app-level limit exists; a determined caller can force recursive 48-step forecasts. Add `slowapi` before exposing this to untrusted traffic at volume. |
 | Capacity is an estimate, not metered rating | **Not a code risk, a claim risk** | `capacity_mw` is a p99-of-load proxy and is labelled as such on the wire (`is_proxy_capacity: true`). Documented in `docs/04` and `docs/13`. |
+| The ENTSO-E request destination is environment-configurable | **Accepted, same boundary as the pickle row** | `entsoe/entsoe.py:32` evaluates `URL = os.getenv("ENTSOE_ENDPOINT_URL") or "https://web-api.tp.entsoe.eu/api"` at import time, and the token travels in that request's query string — so a process environment an attacker already controls also chooses where the credential is sent. That is not an added exposure: setting `ENTSOE_API_KEY` at all requires the same privilege, and environment write access on this host already equals code execution via `joblib.load` (row above). Structural fix if that boundary ever matters: pin the endpoint in code (`EntsoeRawClient` accepts a `session`, so a `requests.Session` with a transport-level host allowlist would make redirection impossible rather than unlikely). |
 
 ## 6. Dependency posture
 
@@ -179,10 +213,18 @@ may be running — and is left as an explicit decision.
 
 ## 8. Test evidence
 
-`python -m pytest tests -q` on 2026-11-06: **63 passed**, 1 warning (an httpx `app=`
-deprecation in the test client, not in product code). The two tests added by this pass are
-`test_every_response_carries_security_and_nocache_headers` and
-`test_unknown_zone_rejection_echoes_only_a_bounded_prefix`.
+`python -m pytest tests -q` on 2026-11-06T11:05Z: **89 passed**, 1 warning (an httpx `app=`
+deprecation in the test client, not in product code). The 63-test run recorded earlier the same day
+has since grown by `tests/test_live_refresh.py` (26 tests), which is where the security-relevant
+coverage of the new egress path lives:
+
+- `test_the_refresh_client_really_calls_the_http_layer` — real entsoe-py client, only
+  `requests.Session.get` stubbed, asserting an HTTP attempt actually happens.
+- `test_published_error_never_carries_the_token` — the credential value must be absent from
+  `/health` while the root cause is still present.
+- `test_redaction_runs_before_the_length_cap` + `test_credential_pattern_covers_the_parameter_spellings_used`.
+- `test_egress_failure_leaves_the_frame_serving` — a failed fetch changes nothing the caller sees.
+- `test_cache_window_blocks_the_next_kick` — request volume cannot amplify egress.
 
 CI on commit `b8c5651` completed with `conclusion=success`, and the per-step record proves the
 new gate executed rather than being skipped:
