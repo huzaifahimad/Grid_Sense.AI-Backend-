@@ -15,8 +15,15 @@ dependencies = [
     "scikit-learn==1.8.0",
 ]
 # Pinned exact versions, not ranges — see requirements.txt for why (a >= range
-# silently pulled a breaking pandas major version during testing). These exact
-# versions are the ones the pipeline was actually verified against.
+# silently pulled a breaking pandas major version during testing).
+# What these pins ARE: the set the live FastAPI Cloud deployment installs, and the set every
+# public endpoint was verified against in production. What they are NOT: this machine.
+# Measured 2026-11-06, 5 of the 9 have drifted locally (fastapi 0.104.1 — which carries
+# CVE-2024-24762, a network-exploitable availability DoS — plus uvicorn 0.24.0, pydantic 2.5.0,
+# pandas 2.3.3, pyarrow 23.0.1); numpy, lightgbm, joblib and scikit-learn match. Local artifact
+# reproduction therefore runs against those older versions, not the pins above.
+# Re-measure rather than trusting this comment: `python scripts/audit_dependencies.py
+# --installed-drift`. The default audit scope checks these pins against OSV and runs in CI.
 # Deliberately no shap in the SERVING dependency set — it pulls in numba+llvmlite
 # transitively and runs once at training time only (the live API reads a
 # precomputed JSON lookup from data/models/risk_factors_by_bucket.json instead).

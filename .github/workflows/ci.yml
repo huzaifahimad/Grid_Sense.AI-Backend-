@@ -10,5 +10,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # Declared name+version only, so this needs no packages installed and covers both
+      # manifests. Exit 2 (OSV unreachable) fails the build on purpose: a green badge from
+      # a check that never ran would be worse than no gate. `--installed-drift` is
+      # deliberately absent — CI installs the pins, so it could only ever report a false
+      # clean here. It belongs on a developer machine.
+      - name: Dependency advisory audit (OSV)
+        run: python scripts/audit_dependencies.py --all
       - run: pip install . pytest httpx
       - run: python -m pytest tests -q

@@ -9,17 +9,28 @@
 # from recurring silently. If you deliberately want to move to newer versions,
 # do it as a conscious upgrade — re-run the full pipeline and check for new
 # deprecation warnings, don't let pip pick a newer version for you by accident.
-entsoe-py==0.6.19
+#
+# entsoe-py 0.8.0 is the version that actually performed the 52,522-row pull on
+# this machine (0.6.19 was only ever declared). Both score 0 OSV advisories, so
+# this is a reproducibility correction, not a security one.
+entsoe-py==0.8.0
 pandas==3.0.2
 numpy==2.4.4
-requests==2.32.3
+# 2.32.3 had 2 distinct CVEs (CVE-2024-47081, CVE-2026-25645) across 4 advisories
+# in OSV; 2.34.2 has 0. This is the library that authenticates to NASA POWER.
+requests==2.34.2
 pyarrow==25.0.1
 scikit-learn==1.8.0
 lightgbm==4.7.0
 shap==0.52.0
-torch>=2.1.0
+# torch and kaggle are pinned exactly like everything else here, but note honestly:
+# neither is installed on the machine that produced the committed artifacts, so
+# these are advisory-clean choices (both 0 OSV findings), not versions this
+# pipeline has been run against. The CNN-LSTM path is designed, not trained —
+# see docs/02. torch 2.5.1 scores 19 distinct CVEs, which is why the floor moved.
+torch==2.15.0
 joblib==1.5.3
 fastapi==0.141.1
 uvicorn==0.52.4
-kaggle>=1.6.0
+kaggle==2.2.5
 pydantic==2.13.4
