@@ -92,17 +92,33 @@ def age_hours(ts: str | None, now: datetime) -> float | None:
     return (now - t).total_seconds() / 3600.0
 
 
-def stale_doc_claims() -> tuple[int, list[str]]:
-    """Count docs files still carrying figures that the retrain superseded.
+STALE_DOC_PATTERNS = [
+    ("docs claim the models are trained on synthetic data",
+     r"trained on synthetic data right now|current synthetic pipeline run|"
+     r"Currently trained on synthetic|synthetic training data pending"),
+    ("docs claim every gate passes",
+     r"overall PASS, 13/13|remains 13/13|13/13 PASS\.$"),
+    ("docs quote the superseded event count",
+     r"206 events"),
+    ("docs quote the superseded lead time",
+     r"3\.0 h lead"),
+    ("docs state a test count that no longer matches the suite",
+     r"48 tests pass\b|# 48 tests|48 passed"),
+]
 
-    Measured with grep so the claim "the docs are stale" has a number behind it.
+
+def stale_doc_claims() -> tuple[int, list[str]]:
+    """Count docs files still carrying assertions the retrain made false.
+
+    Patterns match the false claims themselves, not merely the words that
+    appear in them, so accurate history does not score as drift. Measured with
+    grep so "the docs are synced" has a number behind it.
     """
-    tokens = ["206 events", "13/13", "3.0 h lead", "48 passed", "synthetic"]
     hits = []
-    for tok in tokens:
-        found = sh(["grep", "-rl", tok, "docs"], cwd=str(BACKEND), timeout=60)
+    for label, pattern in STALE_DOC_PATTERNS:
+        found = sh(["grep", "-rlE", pattern, "docs"], cwd=str(BACKEND), timeout=60)
         if found.strip():
-            hits.append(f'"{tok}" in {len(found.split())} file(s)')
+            hits.append(f"{label} — {len(found.split())} file(s)")
     return len(hits), hits
 
 
@@ -327,7 +343,8 @@ def main() -> int:
               size=9.0, style="B")
         for l in warn_labels:
             pdf.bullet(l)
-    pdf.p("Beyond the gates, five things are genuinely unfinished:", size=9.3)
+    open_items = 4 + (1 if n_doc_hits else 0)
+    pdf.p(f"Beyond the gates, {open_items} things are genuinely unfinished:", size=9.3)
     pdf.bullet("No data refresh path. The API loads the committed feature frame at startup and "
                "keeps the last " + fmt(per_zone_hours, '{:.0f}') + " h per zone; there is no "
                "request-time or scheduled fetch, so the newest hour ages one hour per hour after "
@@ -341,12 +358,21 @@ def main() -> int:
     pdf.bullet("Weather currency. NASA POWER arrives on a multi-day lag, so the deployed product "
                "runs on the fallback model. The weather-aware path is therefore exercised in "
                "replay, not in production serving.")
-    pdf.bullet(f"Documentation. {n_doc_hits} superseded-figure patterns still match in docs/ "
-               f"({'; '.join(doc_examples) if doc_examples else 'none'}). README, model card and "
-               "this note are synced to the retrain; the numbered docs are not fully.")
+    if n_doc_hits:
+        pdf.bullet(f"Documentation. {n_doc_hits} superseded-figure patterns still match in docs/ "
+                   f"({'; '.join(doc_examples)}). README, model card and "
+                   "this note are synced to the retrain; the numbered docs are not fully.")
     pdf.bullet("Domain. Load is ENTSO-E (Spain, Greece, Italy South) and weather is NASA POWER. "
                "There is no public Pakistani hourly feed to train on, so NTDC/DISCO is stood in "
                "for and no accuracy figure here transfers to it without retraining.")
+    if not n_doc_hits:
+        pdf.p("Closed since the previous note: the numbered docs are synced. None of the five "
+              "superseded-figure patterns (synthetic-training claims, 13/13 PASS, the 206-event "
+              "count, the 3.0 h lead, the 48-test count) match anywhere in docs/, checked by "
+              "grep when this page was built. The limit of that check is its pattern list — "
+              "prose can still drift in ways these five expressions do not catch, so this is "
+              "evidence the known false claims are gone, not proof the docs are exhaustively "
+              "correct.", size=9.0)
 
     pdf.h1("Future direction")
     pdf.p("Ordered by what each step would actually change about the numbers on screen.", size=9.3)

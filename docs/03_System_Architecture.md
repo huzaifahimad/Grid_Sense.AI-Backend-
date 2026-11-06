@@ -163,7 +163,7 @@ silently absorbed into "it works."
 
 **What to actually do about this:** monitor real memory usage on the live FastAPI Cloud
 deployment using their built-in metrics (their pricing page lists "Basic metrics
-(CPU/Memory)" as an included feature) rather than trusting this sandbox's local Linux
+(CPU/Memory)" as an included feature) rather than trusting local development-machine
 numbers — actual container behavior on their infrastructure could differ. If real usage
 approaches the limit or the service gets OOM-killed under real traffic, the fix options,
 roughly in order of effort: (1) check whether FastAPI Cloud's Pro tier offers more RAM
@@ -176,16 +176,16 @@ the larger rewrite to reduce the pandas/lightgbm import footprint itself.
 ## 8. What Ships Now vs. Roadmap
 
 **Ships now (tested, working):**
-- Full pipeline, run and validated end to end on synthetic data (real ENTSO-E ingestion
-  code exists and is correct, but requires the person's own token/machine to run — see
-  Pipeline Documentation)
-- Real trained LightGBM models for both forecasting and risk classification
+- Full pipeline, run and validated end to end on real data: 51,959 committed hourly rows
+  of ENTSO-E load joined to NASA POWER weather, 3 zones, ~2 years
+- Real trained LightGBM models for both forecasting and risk classification, refit on
+  that real frame
 - A found-and-fixed data leakage bug in the risk classifier (documented in TRD Section 4.1)
 - Live-tested API, all 7 endpoints, real JSON responses verified via curl
 - Frontend that builds successfully and connects to the real API via environment variable
 
 **Explicit roadmap, not claimed as done:**
-- Real ENTSO-E/Pakistani grid data replacing the synthetic validation dataset
+- Pakistani grid data (NTDC/DISCO) replacing these three European bidding zones
 - NTDC/DISCO data integration
 - Real-time SCADA ingestion
 - Live database instead of the static feature-snapshot shortcut (Section 4)

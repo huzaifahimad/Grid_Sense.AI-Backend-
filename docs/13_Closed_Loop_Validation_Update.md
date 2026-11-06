@@ -4,12 +4,35 @@
 **Author:** Huzaifa Himad
 **Date:** 2026-11-03
 **Scope of this update:** model-validation methodology, backend serving layer, operator dashboard, test suite
-**Status:** implemented, tested (48 tests, CI green), **merged to `main` and deployed on both services** — `/validation` is live and the panel is rendering on the public dashboard
+**Status:** implemented, tested (48 tests as of this date, CI green), **merged to `main` and deployed on both services** — `/validation` is live and the panel is rendering on the public dashboard
 
 | Repository | `main` commit | CI | Live status |
 |---|---|---|---|
 | [Grid_Sense.AI-Backend-](https://github.com/huzaifahimad/Grid_Sense.AI-Backend-) | `af26428` | passed | `GET /validation` and `GET /health` verified 200 on `grid-senseai-backend.fastapicloud.dev` |
 | [Grid_Sense.AI-frontend-](https://github.com/huzaifahimad/Grid_Sense.AI-frontend-) | `1c1a87e` | passed | Panel 05 rendering with live report data on `grid-senseai.vercel.app` |
+
+> **Superseded as of 2026-11-06 — read this before quoting any figure below.**
+>
+> Everything in Sections 3–6 describes the replay as it stood on **2026-11-03**, when the
+> feature frame was still the synthetic bootstrap. The frame was rebuilt on two years of
+> real ENTSO-E and NASA POWER hours (commit `9c6a48e`), and `/validation` now returns a
+> different result set. The current live report, fetched 2026-11-06:
+>
+> | Measure | 2026-11-03 (this doc) | Now (live `/validation`) |
+> |---|---|---|
+> | Overall verdict | PASS, 13/13 | **WARN — 9 PASS, 4 WARN, 0 FAIL** |
+> | Window | synthetic replay | 2026-06-13 10:00 → 2026-11-04 17:00 UTC, 3,464 h |
+> | Hours scored | — | 10,122 across ES / GR / IT_SOUTH |
+> | +1 h forecast MAPE | 2.24 % | 2.12 % (seasonal-naive 9.27 %) |
+> | Aggregate P10–P90 coverage | 84.3 % | 84.9 % |
+> | Week-to-week coverage spread | 14.2 pts (PASS) | 19.5 pts (**WARN**) |
+> | Alarm precision / recall | 0.877 / 0.905 | 0.884 / 0.784 |
+> | Event detection recall | — | 0.785 (142 of 181 events) |
+>
+> The four WARN gates are `coverage_drift`, `event_detection`, `event_warning_3h` and
+> `median_lead_hours`. No gate FAILs, so the release verdict is WARN rather than FAIL —
+> and that is the honest state, not a pass to be read as one. The mechanism, not the
+> number, is what this document still earns its place for.
 
 ---
 
@@ -66,7 +89,7 @@ direction. A metric at or above target scores PASS; between floor and target sco
 below floor scores FAIL. Any FAIL makes the overall verdict FAIL, and `--strict` makes the
 process exit non-zero so the gate can block a release.
 
-## 3. Results — overall PASS, 13/13 gates
+## 3. Results — the 2026-11-03 run (13/13 gates PASS at that date; see the superseding block above for the current report)
 
 ### Forecast skill and interval honesty
 
@@ -188,9 +211,12 @@ configuration — which is why the artifact carries its window, stride, horizon 
 
 These are in the report artifact itself and should be read before citing any figure above.
 
-1. **Training data is a documented synthetic bootstrap.** Real ENTSO-E ingestion code is
-   complete and correct, but was built and verified while API approval was pending. The
-   pipeline, metrics plumbing and serving path are real; the distribution is simulated.
+1. **The data is real, but it is not Pakistani data.** This limitation used to read
+   "training data is a documented synthetic bootstrap"; it no longer does — the frame was
+   rebuilt on two years of measured ENTSO-E load and NASA POWER weather. What remains true
+   is narrower: three European bidding zones (ES, GR, IT_SOUTH), no NTDC or DISCO hours,
+   and therefore no evidence the learned distribution transfers to Pakistan's grid
+   unchanged.
 2. **Capacity is a proxy.** "Overload" means load exceeds 0.9 × a per-zone 99th-percentile
    historical load — it is a statistical ceiling, **not** a thermal or emergency (N-1) rating.
    Conductor ratings, transformer limits and contingency criteria are not in the loop.
@@ -222,7 +248,7 @@ cd Grid_Sense.AI-Backend- && git checkout main
 pip install -r requirements.txt
 
 python -m models.closed_loop_validation --strict   # ~15 s, rewrites data/models/closed_loop_report.json
-python -m pytest tests -q                          # 48 tests, incl. both negative controls
+python -m pytest tests -q                          # 59 tests, incl. both negative controls
 uvicorn api.main:app --port 8000
 curl http://localhost:8000/validation
 ```
@@ -250,8 +276,10 @@ computed style resolves to `color(srgb 1 0.357 0.298 / 0.08)`, correctly red; an
 assets loader in `useGridData.js` already abort-guards its rejection, so the suspected
 StrictMode error banner does not occur.
 
-The validator itself was untouched by these fixes, so every §3 number still holds: 48
-tests pass and the replayed report remains 13/13 PASS.
+The validator itself was untouched by these fixes, so every §3 number still held as of
+that date: 48 tests passed and the replayed report was 13/13 PASS. Re-measured on
+2026-11-06 against the real-data artifacts, the suite is **59 passed** and the live
+report is **9 PASS / 4 WARN, overall WARN**.
 
 ---
 

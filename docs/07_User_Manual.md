@@ -105,10 +105,12 @@ fix — check that `load_to_capacity_ratio` is still excluded from the risk clas
 feature list.
 
 **Numbers seem unrealistic or the dashboard is empty:** check whether you're in
-"SIMULATION MODE" — if so, this is expected demo behavior, not a bug. If it says "LIVE"
-and numbers still look wrong, the backend may be serving stale or synthetic training
-data — see Pipeline Documentation Section 1 to check what data the deployed models were
-actually trained on.
+"SIMULATION MODE" — if so, this is expected demo behavior, not a bug. If the feed rail
+says "CURRENT" and numbers still look wrong, the likelier causes are that the deployed
+API is serving the committed feature frame, which ages between rebuilds, or that the
+NASA POWER weather feed is lagging load by roughly two days — see Pipeline Documentation
+Section 1 for what the deployed models were actually trained on, and the Signal
+Integrity rail for how current each feed is right now.
 
 **Dashboard won't load at all / blank white page:** likely a frontend build or
 deployment issue, not a data issue. Check the browser console (F12) for JavaScript
@@ -123,5 +125,7 @@ operations decisions — it surfaces risk signals and reasoning, it does not rep
 professional judgment, and it has no authority to execute any action on real
 infrastructure. Nothing in this system should be treated as a substitute for a grid
 operator's own assessment, especially given the documented limitations (proxy capacity
-data, synthetic training data pending real ENTSO-E integration, no real fault/outage
+data derived from a per-zone historical p99, three European bidding zones rather than
+Pakistani NTDC/DISCO data, weather from a reanalysis product roughly two days behind
+real time, no real fault/outage
 history yet). See the TRD's Known Limitations section for the complete list.

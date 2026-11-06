@@ -119,7 +119,9 @@ the model was reading the answer off a hidden copy of itself rather than actuall
 learning anything.
 
 **The fix:** remove that feature from the model's inputs. Accuracy dropped to a more
-honest 0.9595 on the current synthetic pipeline run.
+honest 0.9595 on the bootstrap run — and after the pipeline was rebuilt on two years of
+real ENTSO-E and NASA POWER data, the same leak-free model measures **0.9268** PR-AUC,
+which is the number to quote.
 
 **Why this is worth a slide of its own:** a lower, honest number after fixing a real bug
 is a better outcome than a suspiciously perfect one — and this kind of issue only
@@ -201,10 +203,10 @@ start.
 
 Stated plainly, not discovered later by someone else:
 
-- **Currently trained on synthetic data**, not yet real Pakistani or even real ENTSO-E
-  data in the deployed models — a deliberate bootstrap choice to validate the full
-  pipeline end-to-end before waiting on external API approval delays, clearly documented
-  as such rather than presented as more than it is.
+- **Real data, wrong grid.** The models are trained on two years of measured ENTSO-E and
+  NASA POWER hours for Spain, Greece and Italy South — not Pakistani NTDC or DISCO data,
+  which has no public hourly feed. Nothing here should be read as claiming the learned
+  distribution transfers to Pakistan unchanged.
 - **No real fault/outage history yet** — overload risk currently uses a proxy label
   (load exceeding 90% of estimated capacity), a standard technique but a real accuracy
   ceiling until genuine outage records are available.

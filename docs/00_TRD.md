@@ -80,28 +80,44 @@ for a production deployment.
 
 ## 4. Success Metrics and Actual Results
 
-**Important framing:** the numbers below were produced on SYNTHETIC data (see
-`docs/06_Pipeline_Documentation.md` for why), generated to validate the pipeline
-mechanically end to end while real ENTSO-E ingestion was pending. They prove the code
-works. They do not prove real-world accuracy. Do not cite these numbers to anyone as
-product performance without re-running on real data first.
+**Important framing:** the numbers below are measured on the committed feature frame —
+51,959 hourly rows of real ENTSO-E load joined to real NASA POWER weather, split
+walk-forward. They are not bootstrap-simulation figures. What they still do not prove is
+transfer to Pakistani data, because they are three European bidding zones (see Section
+5).
 
-### Load forecasting (on synthetic data)
+### Load forecasting (real data, committed artifacts)
 
 | Model | MAPE | MAE (MW) | RMSE (MW) |
 |---|---|---|---|
-| Persistence (t-24h) | 6.59% | 221.09 | 288.03 |
-| Seasonal-naive (t-168h) | 5.20% | 181.00 | 231.56 |
-| **LightGBM** | **2.23%** | **76.67** | **97.08** |
+| Persistence (t-24h) | 7.81% | 842.02 | 1640.46 |
+| Seasonal-naive (t-168h) | 9.20% | 788.70 | 1249.39 |
+| **LightGBM** | **2.10%** | **176.53** | **278.59** |
+| LightGBM, no-weather fallback | 2.12% | 180.03 | 284.41 |
 
-LightGBM clears both baselines by a wide margin. Expect this margin to shrink and MAPE
-to rise on real data — synthetic data is smoother and more learnable by construction.
-Real published NTDC-data benchmark studies report 2.38–3.72% MAPE for LSTM-hybrid
-models — that is the credible external reference point, not this synthetic result.
+Two things in that table are worth reading carefully rather than skimming:
+
+- The earlier expectation was that the LightGBM margin would shrink and MAPE would rise
+  once real data replaced the synthetic bootstrap. It did not: MAPE went 2.23% → 2.10%.
+  The prediction in this doc's previous revision was wrong, and the measured number is
+  the one that stands.
+- The two baselines trade places against the synthetic run. On real data, persistence
+  beats seasonal-naive on MAPE (7.81% vs 9.20%) while losing on MAE and RMSE, so which
+  baseline you compare against changes the headline improvement. This system reports
+  against the seasonal-naive baseline, which is the harsher one on MAPE.
+
+An external LSTM-hybrid figure of 2.38–3.72% MAPE is quoted elsewhere in these docs as
+a rough reference point. Its provenance is recorded in `docs/01_Data_Sourcing_Plan.md`
+§1.2 as a *candidate* source that has not been verified against the paper's own tables,
+and this project has not compared itself against it. Do not present it as a benchmark
+GridSense AI meets.
 
 ### Risk classification
 
-PR-AUC: 0.9595 on the current synthetic pipeline run (after removing the label-leakage feature).
+PR-AUC: **0.9268** on the 10,122-row walk-forward test split of the real feature frame,
+with Brier **0.0309** against a base-rate reference of 0.1105 (a skill score of 0.7204).
+Reproduced by loading the committed `data/models/risk_classifier.joblib` and scoring the
+same split; the classifier itself is never refit by that check.
 
 ### 4.1 Bug found and fixed during live testing
 
@@ -111,8 +127,9 @@ basis of the proxy label (`overload = load/capacity > 0.9`), so the classifier w
 reading the label off a near-copy of itself rather than learning anything. Fixed by
 removing that feature from the risk classifier's `FEATURE_COLS` (it remains available
 for the shed-schedule rules layer, which legitimately needs it). PR-AUC dropped to
-0.9595 post-fix — a lower, honest number, which is the correct outcome of fixing real
-leakage, not a regression.
+0.9595 post-fix on the bootstrap run — a lower, honest number, which is the correct
+outcome of fixing real leakage, not a regression. The real-data rebuild measures 0.9268
+(Section 4), so the leak fix has not been quietly undone.
 
 ---
 

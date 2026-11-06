@@ -12,9 +12,11 @@ for what's real vs. synthetic in the current state).
 
 1. Read `docs/06_Project_Overview.md` and `docs/04_Pipeline_Documentation.md` in the
    backend repo fully before touching code.
-2. Check what's actually present: `data/raw/` (should be empty/gitignored),
-   `data/features/training_features.parquet` (should exist, trained on synthetic data
-   per the docs — confirm this claim is true, don't just trust the doc), `data/models/`
+2. Check what's actually present: `data/raw/` (gitignored, and expected to hold
+   `entsoe_load.parquet` and `nasa_power_weather.parquet` on the machine that ran the
+   pulls), `data/features/training_features.parquet` (should exist and should carry
+   `load_source = entsoe` on every row — confirm from the stamps, not from this doc),
+   `data/models/`
    (should have `lightgbm_load_forecast.joblib`, `risk_classifier.joblib`,
    `risk_factors_by_bucket.json`, `baseline_results.csv`).
 3. Check `config.py` — confirm `ENTSOE_API_KEY` is the placeholder string, not a real
@@ -85,7 +87,8 @@ for what's real vs. synthetic in the current state).
 For each of these specific claims made in the docs, verify it's still true by checking
 the actual code, not by trusting the document:
 
-- TRD Section 4.1: "PR-AUC 0.9595 after fixing leak" — does `models/risk_classifier.py`
+- TRD Section 4.1: "PR-AUC 0.9268 on the real-data model, 0.9595 on the superseded
+  bootstrap run" — does `models/risk_classifier.py`
   still exclude `load_to_capacity_ratio` from `FEATURE_COLS`? Confirm by reading the
   actual list in the file.
 - System Architecture Section 2.2: "282MB minimum for Vercel serverless, over the
@@ -93,10 +96,11 @@ the actual code, not by trusting the document:
   but confirm no one has since tried to reintroduce Python backend code into the
   frontend repo (check for `requirements.txt`, `api/`, or `ml_models/` folders existing
   in `gridsense-frontend` — there should be NONE).
-- Pipeline Documentation Section 1: confirm the data really is synthetic-trained, not
-  real ENTSO-E, by checking whether `data/raw/` has ever had real ENTSO-E files
-  (check git log for evidence, or just confirm current `data/raw/` is empty/gitignored
-  and no real ingestion has been recorded as run).
+- Pipeline Documentation Section 1: confirm the committed frame really is real data, by
+  reading the provenance stamps rather than the prose —
+  `python -c "import pandas as pd; f=pd.read_parquet('data/features/training_features.parquet'); print(f['load_source'].value_counts().to_dict(), f['weather_source'].value_counts().to_dict())"`
+  should show every row stamped `entsoe`, and weather split `nasa_power` / `unavailable`.
+  A `synthetic` stamp anywhere in `load_source` would mean the claim is false again.
 
 ## Phase 6 — Final report
 

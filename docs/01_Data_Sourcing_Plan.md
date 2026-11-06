@@ -27,10 +27,16 @@ synthetic or a proxy, it's labeled as such.
 - **Access:** UI is public, no login needed for manual browsing. API access requires a free
   PJM Tools account. Non-members capped at 6 API calls/minute — plan batch pulls accordingly.
 - **Why:** This is the exact type of dataset used as the generalization benchmark in the
-  closest real precedent to this project — a published study trained an LSTM-hybrid model on
-  actual NTDC (Pakistan) load data and validated generalization against AEP and ISO-NE
-  (both PJM-adjacent US utility data), reporting MAPE of 2.38–3.72%. Replicate that
+  closest real precedent to this project — a published study apparently trained an
+  LSTM-hybrid model on
+  actual NTDC (Pakistan) load data and validated generalization against AEP and ISO-NE,
+  reporting MAPE of 2.38–3.72%. Replicate that
   benchmarking structure: train/validate cross-utility, not on one dataset alone.
+  **Candidate source, not yet verified:** *Multi-horizon short-term load forecasting using
+  hybrid of…* (PubMed PMID 37810340; code at github.com/SyedHasnat/Papers), located
+  2026-11-06. The paper's own tables were not reachable from this environment, so the
+  2.38–3.72% range and the AEP/ISO-NE detail are reproduced here as a lead to confirm,
+  **not** as a benchmark this project has compared itself against.
 
 ### 1.3 Kaggle open grid datasets — **supplementary, for fault/anomaly modeling**
 - Smart Grid Real-Time Load Monitoring Dataset (ziya07) — time-series load + fault flags

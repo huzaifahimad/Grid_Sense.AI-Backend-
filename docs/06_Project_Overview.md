@@ -26,20 +26,25 @@ Pakistani utility data, not just a hackathon demo.
 
 ## The two things anyone evaluating this should understand immediately
 
-**1. It's trained on synthetic data right now, and that's documented, not hidden.**
-The full pipeline — data ingestion, feature engineering, model training, API serving,
-frontend — was built and verified end to end using realistic synthetic data as a
-bootstrap, because real ENTSO-E API access has an approval delay. The code to pull real
-data is complete and tested; running it just requires the person's own credentials. See
-`docs/04_Pipeline_Documentation.md` for the exact breakdown of what's real vs. synthetic
-right now.
+**1. It's trained on two years of real ENTSO-E and NASA POWER data — and the limits that
+survive that are documented, not hidden.**
+The pipeline was originally built and verified on a synthetic bootstrap while ENTSO-E
+API access was pending, and that bootstrap was later replaced: the committed feature
+frame is 51,959 hourly rows whose every load row is stamped `entsoe` and whose weather
+is stamped `nasa_power` (270 rows unavailable). What genuinely remains unproven is
+narrower but real: the overload label is a per-zone p99 proxy rather than a verified
+thermal capacity, the zones are Spanish, Greek and Italian rather than Pakistani, and
+NASA POWER reanalysis runs roughly two days behind real time. See
+`docs/04_Pipeline_Documentation.md` for the exact breakdown of what's real and what is
+still a proxy.
 
 **2. Real bugs were found and fixed by actually running the system, not just writing it.**
 Most notably: the risk classifier initially had a label-leakage bug (a feature that was
 near-identical to the target it was predicting), producing a suspiciously perfect
 PR-AUC and identical risk scores across every grid zone. This was caught by
 live-testing the deployed API and noticing the identical scores, traced to the leak, and
-fixed — the current synthetic pipeline run reports an honest PR-AUC of 0.9595. That's the kind of finding that only
+fixed — the leak-free model on real data reports an honest PR-AUC of 0.9268 (Brier 0.0309
+against a 0.1105 base rate), re-measured from the committed artifacts. That's the kind of finding that only
 surfaces from actually running a system, and it's documented rather than swept aside.
 
 ## What the system actually does, end to end

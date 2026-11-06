@@ -27,11 +27,11 @@ def pull_weather(zone_name: str, lat: float, lon: float, start: str, end: str) -
 
     Chunks the request by calendar year rather than one large multi-year call.
     NASA POWER's hourly endpoint has practical limits on request size/duration
-    for large date ranges that aren't precisely documented — this couldn't be
-    live-verified from this environment (no network access to power.larc.nasa.gov
-    in this sandbox), so chunking is a defensive fix that removes the risk
-    entirely regardless of where the real limit actually is, rather than betting
-    a 2-year single request against an unconfirmed ceiling.
+    for large date ranges that aren't precisely documented, so chunking is a
+    defensive fix that removes the risk regardless of where the real limit
+    actually is, rather than betting a 2-year single request against an
+    unconfirmed ceiling. The chunked path itself is verified against the live
+    endpoint; the unchunked ceiling is still undocumented.
     """
     start_dt = pd.to_datetime(start, format="%Y%m%d")
     end_dt = pd.to_datetime(end, format="%Y%m%d")

@@ -9,26 +9,34 @@ and the precise run order to regenerate everything from scratch.
 
 | Stage | Current status in the committed repo |
 |---|---|
-| Raw ENTSO-E load data | NOT present (gitignored, regenerable) — the code to pull it is real and tested, but has not been run with real credentials in the committed artifacts |
-| Raw NASA POWER weather data | Same as above |
-| `data/features/training_features.parquet` | Present, committed — generated from SYNTHETIC data (see Section 2), not real ENTSO-E |
-| `data/models/*.joblib` | Present, committed — trained on the synthetic feature set above |
-| `data/models/risk_factors_by_bucket.json` | Present, committed — precomputed SHAP factors from the synthetic-trained model |
-| `data/models/baseline_results.csv` | Present, committed — real metrics, but measured on synthetic data |
+| Raw ENTSO-E load data | Present locally, gitignored by design: `data/raw/entsoe_load.parquet`, 52,522 hourly rows, 3 zones, 2024-11-04 19:00 → 2026-11-04 17:00 UTC, pulled with a real API token |
+| Raw NASA POWER weather data | Same: `data/raw/nasa_power_weather.parquet`, 52,560 hourly rows, 3 zones, 2024-11-04 → 2026-11-03 UTC |
+| `data/features/training_features.parquet` | Present, committed — 51,959 rows × 29 columns, every row stamped `load_source = entsoe` and 51,689 stamped `weather_source = nasa_power` (270 `unavailable`). Rebuilt on real data in commit `9c6a48e` |
+| `data/models/*.joblib` | Present, committed — trained on the real feature frame above |
+| `data/models/risk_factors_by_bucket.json` | Present, committed — precomputed SHAP factors from the real-data-trained model |
+| `data/models/baseline_results.csv` | Present, committed — real metrics, measured on real data |
 
-**What this means practically:** the deployed API right now will return real, working,
-mechanically-correct predictions — but they're predictions from a model trained on
-synthetic data designed to mimic realistic grid/weather patterns, not real ENTSO-E
-history. This is a deliberate, documented bootstrap choice, not an oversight — it let
-the entire pipeline (ingestion → features → training → serving → frontend) be built and
-verified end to end without waiting on external API approval delays.
+**What this means practically:** the deployed API returns predictions from a model
+trained on two years of measured ENTSO-E load and NASA POWER weather. The accuracy
+numbers in this repo are therefore real measurements, not pipeline-mechanics proofs.
 
-**Before treating any accuracy number here as real:** re-run the pipeline with real
-ENTSO-E data (Section 3) and regenerate the model artifacts.
+**Three caveats that survive the switch to real data,** and are the reason "real data" is
+not the same as "validated product":
+
+- The overload label is a proxy. `capacity_mw` is a per-zone p99 of observed load, so
+  "overload" means unusually high for that zone, not thermally verified.
+- Weather is a reanalysis product, roughly two days behind real time, which is why the
+  fallback no-weather forecaster exists.
+- The three zones are European. Nothing here has been run on Pakistani data.
+
+`ingestion/synthetic_bootstrap.py` is no longer part of the path that produced the
+committed artifacts. It remains in the repo as the way to exercise the pipeline on a
+machine with no API credentials, and the features layer still refuses to label a
+synthetic row as real.
 
 ---
 
-## 2. Why Synthetic Data Exists At All
+## 2. Where the Synthetic Bootstrap Came From
 
 `ingestion/synthetic_bootstrap.py` generates schema-correct load and weather data
 matching exactly what `entsoe_client.py` and `nasa_power_client.py` produce — same
@@ -41,12 +49,15 @@ columns, same types, same join keys — with realistic structure baked in:
 - AR(1)-correlated noise (not pure white noise — real load data isn't that clean)
 - Matching weather (temperature/humidity/wind correlated with the same seasonal cycle)
 
-This exists SOLELY to prove the pipeline works mechanically without waiting on external
-API access. It is not a modeling shortcut meant to persist — replace it per Section 3.
+This existed so the pipeline could be built and debugged before ENTSO-E API approval
+came through. It served that purpose and was then displaced: Section 1 documents that
+the committed artifacts come from real pulls, not from it. What it still buys you is a
+way to run the whole chain on a machine with no credentials — which is why the code
+stays, and why nothing synthetic gets a `load_source = entsoe` stamp.
 
 ---
 
-## 3. Regenerating Everything With Real Data
+## 3. Regenerating Everything From Scratch
 
 Run this locally (not on any deploy platform — training happens on your machine, only
 the trained artifacts get deployed):
@@ -97,8 +108,10 @@ Original `FEATURE_COLS` for the risk classifier included `load_to_capacity_ratio
 exact quantity the proxy label is thresholded on. Result: near-perfect PR-AUC and every
 zone returning an identical risk score to 13 decimal places, both symptoms of the model
 reading the answer off a near-copy of the label rather than learning anything. Fixed by
-removing that feature from the classifier's inputs. The current synthetic pipeline run
-reports a more honest PR-AUC of 0.9595 after the fix.
+removing that feature from the classifier's inputs. Post-fix, the synthetic bootstrap
+run reported a more honest PR-AUC of 0.9595; after the rebuild on two years of real
+ENTSO-E and NASA POWER data, the same code measures **0.9268** on the 10,122-row test
+split (Brier 0.0309 against a 0.1105 base-rate reference).
 
 **If you retrain from scratch and see PR-AUC suspiciously close to 1.0 again, or
 identical scores across zones, this is the first thing to check.**
@@ -118,12 +131,16 @@ Covered fully in System Architecture doc Section 3 and ML Model Design doc Secti
 `ingestion/entsoe_client.py` accepted both a bidding-zone EIC code (e.g.
 `"10Y1001A1001A788"` for Italy South) and an internal label (e.g. `"IT_SOUTH"`) as
 parameters, but called `client.query_load(country_code, ...)` — using the internal
-label, not the EIC code. This never surfaced during testing because this sandbox has no
-network access to the ENTSO-E API, so it was never actually run end to end. It would
+label, not the EIC code. This never surfaced earlier because the pipeline was still
+running on the synthetic bootstrap at the time, so the real ingestion path had never
+been exercised. It would
 likely have failed outright for `IT_SOUTH` specifically (not a real ISO country code —
 entsoe-py has no built-in alias for it), while possibly working by accident for Spain and
 Greece (entsoe-py has built-in ISO-code aliases for standard countries, which would have
-masked the bug for those two zones only). Fixed to use the actual EIC code. **This is
+masked the bug for those two zones only). Fixed to use the actual EIC code, and the fix
+has since been exercised for real: the committed `data/raw/entsoe_load.parquet` is
+52,522 rows pulled through this code path across all three zones, `IT_SOUTH` included.
+**This is
 exactly the kind of bug that only surfaces on first real run — test the real ingestion
 carefully when you run it with your token, don't assume a clean run on synthetic data
 means the real-data path is bug-free too.**
@@ -132,11 +149,15 @@ means the real-data path is bug-free too.**
 
 `ingestion/nasa_power_client.py` originally requested 2 full years of hourly data in one
 HTTP call. NASA POWER's hourly endpoint has practical limits on request size/duration
-for large date ranges that aren't precisely documented, and this couldn't be verified
-live from this environment (no network access to power.larc.nasa.gov here either).
+for large date ranges that aren't precisely documented, and at the time this was written
+neither the limit nor the behaviour could be checked from a machine without access to
+power.larc.nasa.gov.
 Rather than risk a real failure on first run, the ingestion now chunks requests by
 calendar year — this removes the risk regardless of where the actual undocumented limit
-is.
+is. The chunked path has since been run against the live endpoint and produced the
+committed `data/raw/nasa_power_weather.parquet` (52,560 rows, 3 zones), so the fix is
+verified as working; where the unchunked request would actually have broken is still
+undocumented.
 
 ### 4.6 Unhandled forecast horizon input (found via edge-case testing, fixed)
 

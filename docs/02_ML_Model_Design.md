@@ -13,10 +13,13 @@ Why this specific architecture, not "deep learning" as a vague label:
 
 - **1D-CNN layers first:** extract short-range local patterns (hourly ramp shapes, sudden
   spikes) from the raw sequence before it hits the recurrent layers. This mirrors the
-  LSTM + modified split-convolution approach used in the published NTDC-data benchmark
-  study, which is the closest real precedent available and reported strong results
-  (MAPE 2.38% single-step, 3.72% multi-step) on actual Pakistan grid data — that's your
-  target ballpark, not an arbitrary one.
+  LSTM + modified split-convolution approach attributed to the closest real precedent
+  study (candidate source and its unverified status are recorded in
+  `docs/01_Data_Sourcing_Plan.md` §1.2), reported at MAPE 2.38% single-step and 3.72%
+  multi-step on Pakistan grid data. Treat that range as an unconfirmed external
+  reference, not a goal this project has measured itself against — the deployed LightGBM
+  forecaster already reports 2.10% test MAPE on real European hours (TRD Section 4), so
+  the headline figure here would not be an improvement if it were reproduced.
 - **LSTM layers second:** capture longer sequence dependencies — daily/weekly cyclic
   patterns, multi-day heatwave persistence.
 - **Why not a plain Transformer for v1:** Transformers need more data to outperform
