@@ -1,7 +1,13 @@
 # Training-only code and data — not needed by the live API, keeps the
 # deployed bundle lean and avoids uploading raw/training artifacts.
 data/raw/
-ingestion/
+# ingestion/ is listed file-by-file rather than as a directory on purpose: the
+# live API now imports entsoe_client and nasa_power_client from it
+# (api/live_refresh.py refreshes the served frame at request time), and a
+# directory-level exclusion cannot be re-included per file under gitignore
+# semantics — the shape this list is written in.
+ingestion/kaggle_ingest.py
+ingestion/synthetic_bootstrap.py
 models/train_lstm_cnn.py
 requirements.txt
 requirements-vercel.txt

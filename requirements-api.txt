@@ -16,3 +16,12 @@ pyarrow==25.0.1
 lightgbm==4.7.0
 joblib==1.5.3
 scikit-learn==1.8.0
+# The last two exist only because the serving process now refreshes its own data.
+# api/live_refresh.py pulls the missing ENTSO-E hours at request time (plus NASA
+# POWER weather when that has caught up), which reverses the earlier tradeoff
+# recorded in that module: "runtime holds no third-party credentials so an
+# upstream outage can't fail the demo". entsoe-py drags in pytz + beautifulsoup4.
+# Both are the versions that performed the verified 2026-11-03 real pull (see
+# requirements.txt) and both scored 0 OSV advisories there.
+entsoe-py==0.8.0
+requests==2.34.2

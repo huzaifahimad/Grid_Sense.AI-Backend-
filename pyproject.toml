@@ -13,6 +13,12 @@ dependencies = [
     "lightgbm==4.7.0",
     "joblib==1.5.3",
     "scikit-learn==1.8.0",
+    # api/live_refresh.py refreshes the served frame from ENTSO-E at request time,
+    # so the serving process now needs the ingestion clients' dependencies. Kept in
+    # sync with requirements-api.txt / requirements-vercel.txt, as those files
+    # require. entsoe-py pulls pytz + beautifulsoup4.
+    "entsoe-py==0.8.0",
+    "requests==2.34.2",
 ]
 # Pinned exact versions, not ranges — see requirements.txt for why (a >= range
 # silently pulled a breaking pandas major version during testing).

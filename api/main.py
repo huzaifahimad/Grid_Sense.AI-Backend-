@@ -57,6 +57,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from config import MODELS_DIR, DATA_FEATURES_DIR, ENTSOE_ZONES
+from api import live_refresh
 from models.decision_rules import (
     MAX_HORIZON_HOURS,
     bucket_for_score,
@@ -168,9 +169,28 @@ def _load_artifacts() -> None:
         log.warning("no feature data found — run features/build_features.py first")
 
 
+def _publish_frame(frame: pd.DataFrame) -> None:
+    """Swap the served frame in. A single dict write, so readers see old or new."""
+    _state["features"] = frame
+
+
+def _refresh_served_frame() -> None:
+    """
+    Non-blocking: starts a background refresh if one is due, returns immediately.
+
+    Called from the data endpoints rather than a middleware so docs pages and
+    health probes cannot spend the egress budget, and so a request never waits on
+    the network — the refreshed frame lands on the caller's next poll.
+    """
+    live_refresh.kick_if_due(_state["features"], _publish_frame)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _load_artifacts()
+    # Kick once at boot so the frame is already chasing the feed before the first
+    # dashboard request; the endpoint hooks below then keep it there.
+    _refresh_served_frame()
     yield
 
 
@@ -359,6 +379,10 @@ class HealthResponse(BaseModel):
     # the real ingestion write the same file names, so this is the only field
     # that lets a reader tell them apart without opening the parquet.
     data_provenance: dict
+    # What the request-time refresher is doing about the age reported above:
+    # whether egress is enabled, when it last ran, how many hours it added, and the
+    # reason it last fell back to the committed frame.
+    data_refresh: dict = {}
 
 
 class ValidationGate(BaseModel):
@@ -465,6 +489,7 @@ def health():
         serving_window_end=df["timestamp"].max().isoformat() if df is not None else None,
         interval_method=(_state["intervals"] or {}).get("method", "fixed ±8% fallback"),
         data_provenance=provenance,
+        data_refresh=live_refresh.status(df),
     )
 
 
@@ -493,6 +518,7 @@ def get_validation():
 
 @app.get("/forecast/{zone}", response_model=ForecastResponse)
 def get_forecast(zone: str, horizon_hours: int = Query(default=24, ge=1, le=MAX_HORIZON_HOURS)):
+    _refresh_served_frame()
     if _state["features"] is None or _state["forecast_model"] is None:
         raise HTTPException(503, "Models not loaded. Train models first — see README.")
 
@@ -561,6 +587,7 @@ def get_forecast(zone: str, horizon_hours: int = Query(default=24, ge=1, le=MAX_
 
 @app.get("/risk/{zone}", response_model=RiskResponse)
 def get_risk(zone: str):
+    _refresh_served_frame()
     if _state["features"] is None or _state["risk_model"] is None:
         raise HTTPException(503, "Risk model not loaded. Train models first — see README.")
 
@@ -589,6 +616,7 @@ def get_risk(zone: str):
 @app.get("/assets", response_model=list[AssetSummary])
 def list_assets():
     """Ranked list for the dashboard's asset panel and the 3D topology view."""
+    _refresh_served_frame()
     if _state["features"] is None or _state["risk_model"] is None:
         raise HTTPException(503, "Models not loaded. Train models first — see README.")
 

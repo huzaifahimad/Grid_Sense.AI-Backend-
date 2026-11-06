@@ -28,18 +28,38 @@ except ImportError:
 MAX_BACKFILL_DAYS = 120
 
 
-def get_client() -> "EntsoePandasClient":
+def get_client(timeout: int | None = None,
+               retry_count: int | None = None) -> "EntsoePandasClient":
+    """
+    Build an ENTSO-E client.
+
+    timeout/retry_count exist for the request-time refresh path, which cannot
+    inherit the offline pull's defaults: retry_count=3 with retry_delay=10 means
+    a dead endpoint costs ~2 minutes before raising, and the serving process
+    would rather fall back to the committed frame inside a few seconds.
+    """
     if not ENTSOE_API_KEY:
         raise ValueError(
             "ENTSO-E API key not set. Set the ENTSOE_API_KEY environment variable "
             "(or paste it into config.py for local-only use — never commit it)."
         )
-    return EntsoePandasClient(api_key=ENTSOE_API_KEY)
+    kwargs = {}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    if retry_count is not None:
+        kwargs["retry_count"] = retry_count
+    return EntsoePandasClient(api_key=ENTSOE_API_KEY, **kwargs)
 
 
-def pull_load(zone_code: str, country_code: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+def pull_load(zone_code: str, country_code: str, start: pd.Timestamp, end: pd.Timestamp,
+              client: "EntsoePandasClient | None" = None,
+              backfill: bool = True, verbose: bool = True) -> pd.DataFrame:
     """
     Pull actual load for one zone, normalised to a gap-free-able hourly UTC series.
+
+    backfill=False skips the late-publication retry pass below — required by the
+    request-time refresh path, where one day-sized request per empty hour-span
+    would blow the latency budget. verbose=False keeps that path's log readable.
 
     Live-probed behaviour of the SOP endpoint (2026-11-03, with a real token) that
     the original single-call version got wrong:
@@ -50,8 +70,10 @@ def pull_load(zone_code: str, country_code: str, start: pd.Timestamp, end: pd.Ti
       * the index is the zone's *civil* timezone with DST (+01:00 / +02:00),
         while the weather join and every lag feature assume one UTC hourly grid.
     """
-    client = get_client()
-    print(f"[entsoe] pulling load for {country_code} ({zone_code}): {start.date()} -> {end.date()}")
+    client = client if client is not None else get_client()
+    if verbose:
+        print(f"[entsoe] pulling load for {country_code} ({zone_code}): "
+              f"{start.date()} -> {end.date()}")
 
     # BUG FIX (found during code review, never live-tested against the real API):
     # this previously called query_load(country_code, ...) — using the internal
@@ -62,6 +84,7 @@ def pull_load(zone_code: str, country_code: str, start: pd.Timestamp, end: pd.Ti
     # needs the real EIC code (e.g. "10Y1001A1001A788"). Spain/Greece might have
     # accidentally worked since entsoe-py has built-in aliases for standard ISO
     # country codes, which masked this bug for those two zones specifically.
+    _say = (lambda *a: print(*a)) if verbose else (lambda *a: None)
     chunks, failed = [], []
     chunk_start = start
     while chunk_start < end:
@@ -96,13 +119,13 @@ def pull_load(zone_code: str, country_code: str, start: pd.Timestamp, end: pd.Ti
     # back empty, and re-requesting one of those months on 2026-11-04 returned all of
     # them. Without this pass those hours stay missing forever and every lag feature
     # around them gets dropped.
-    empty = hourly.index[hourly.isna()]
+    empty = hourly.index[hourly.isna()] if backfill else hourly.index[:0]
     recovered = 0
     if len(empty):
         days = pd.DatetimeIndex(empty).normalize().unique()
         if len(days) > MAX_BACKFILL_DAYS:
-            print(f"[entsoe]   {country_code}: {len(days)} empty day(s), backfill capped at "
-                  f"{MAX_BACKFILL_DAYS} — {len(days) - MAX_BACKFILL_DAYS} day(s) not retried")
+            _say(f"[entsoe]   {country_code}: {len(days)} empty day(s), backfill capped at "
+                 f"{MAX_BACKFILL_DAYS} — {len(days) - MAX_BACKFILL_DAYS} day(s) not retried")
         for day in days[:MAX_BACKFILL_DAYS]:
             try:
                 res = client.query_load(zone_code, start=day,
@@ -120,8 +143,8 @@ def pull_load(zone_code: str, country_code: str, start: pd.Timestamp, end: pd.Ti
                 hourly = hourly.fillna(fill)
                 recovered += gained
         if recovered:
-            print(f"[entsoe]   {country_code}: backfill recovered {recovered} late-published "
-                  f"hour(s) across {min(len(days), MAX_BACKFILL_DAYS)} day request(s)")
+            _say(f"[entsoe]   {country_code}: backfill recovered {recovered} late-published "
+                 f"hour(s) across {min(len(days), MAX_BACKFILL_DAYS)} day request(s)")
 
     df = hourly.reset_index()
     df.columns = ["timestamp", "load_mw"]
@@ -132,17 +155,27 @@ def pull_load(zone_code: str, country_code: str, start: pd.Timestamp, end: pd.Ti
     n_before = len(df)
     df = df.dropna(subset=["load_mw"]).drop_duplicates(subset=["timestamp"])
     n_after = len(df)
+    if n_after == 0:
+        # Every requested hour came back unpublished. Normal for a tail fetch that
+        # runs ahead of ENTSO-E's publication lag; must not read as a crash.
+        _say(f"[entsoe]   {country_code}: no published hours in "
+             f"{start.isoformat()} -> {end.isoformat()}")
+        if failed:
+            _say(f"[entsoe]   {len(failed)} monthly chunk(s) failed for {country_code}: "
+                 f"{failed[:6]}")
+        return df
     expected = int((df["timestamp"].iloc[-1] - df["timestamp"].iloc[0]) / pd.Timedelta(hours=1)) + 1
-    print(f"[entsoe]   {country_code}: {n_after} hourly rows, "
-          f"{df['timestamp'].min()} -> {df['timestamp'].max()}")
+    _say(f"[entsoe]   {country_code}: {n_after} hourly rows, "
+         f"{df['timestamp'].min()} -> {df['timestamp'].max()}")
     if n_before > n_after:
-        print(f"[entsoe]   dropped {n_before - n_after} empty hours for {country_code}")
+        _say(f"[entsoe]   dropped {n_before - n_after} empty hours for {country_code}")
     if expected - n_after > 0:
-        print(f"[entsoe]   NOTE: {expected - n_after} hour(s) missing inside the span for "
-              f"{country_code} — build_features keeps them; the serving path drops "
-              f"history before the last gap rather than forecasting on misaligned lags")
+        _say(f"[entsoe]   NOTE: {expected - n_after} hour(s) missing inside the span for "
+             f"{country_code} — build_features keeps them; the serving path drops "
+             f"history before the last gap rather than forecasting on misaligned lags")
     if failed:
-        print(f"[entsoe]   {len(failed)} monthly chunk(s) failed for {country_code}: {failed[:6]}")
+        _say(f"[entsoe]   {len(failed)} monthly chunk(s) failed for {country_code}: "
+             f"{failed[:6]}")
 
     return df
 

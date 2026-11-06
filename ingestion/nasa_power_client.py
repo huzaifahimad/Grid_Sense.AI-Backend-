@@ -21,9 +21,14 @@ from config import NASA_POWER_BASE_URL, ZONE_COORDINATES, DATA_RAW_DIR
 PARAMETERS = "T2M,RH2M,WS10M,PRECTOTCORR"
 
 
-def pull_weather(zone_name: str, lat: float, lon: float, start: str, end: str) -> pd.DataFrame:
+def pull_weather(zone_name: str, lat: float, lon: float, start: str, end: str,
+                 timeout: int = 90) -> pd.DataFrame:
     """
     Pull hourly weather for one zone. start/end format: 'YYYYMMDD'
+
+    timeout stays 90 for the offline pull but is passed short by the request-time
+    refresh path, which would rather skip the weather join (the appended hours land
+    in the frame's existing "unavailable" bucket) than hold a thread for a minute.
 
     Chunks the request by calendar year rather than one large multi-year call.
     NASA POWER's hourly endpoint has practical limits on request size/duration
