@@ -217,7 +217,7 @@ Full run order and real-vs-synthetic breakdown:
 | Variable | Where | Required | Purpose |
 |---|---|---|---|
 | `ENTSOE_API_KEY` | FastAPI Cloud secret store / local shell | Only for real-data ingestion | ENTSO-E Transparency Platform API token. **Never commit it** — `config.py` reads it from the environment only. |
-| `CORS_ORIGINS` | FastAPI Cloud environment | Production | Comma-separated exact frontend origins, for example `https://your-project.vercel.app`; unset defaults to open CORS for local/demo use. |
+| `CORS_ORIGINS` | FastAPI Cloud environment | Optional | Comma-separated exact frontend origins, for example `https://your-project.vercel.app`. Unset does **not** mean open CORS: `api/main.py` falls back to the single hardcoded origin `https://grid-senseai.vercel.app`. Measured 2026-11-06 against both live and local with the variable unset — that origin is echoed in `access-control-allow-origin`, `https://evil.example.com` gets no CORS header at all, and `POST /health` returns 405 because only `GET` is allowed. No credentials are permitted. |
 
 Set it on FastAPI Cloud:
 
@@ -281,6 +281,7 @@ Step-by-step guide: [`docs/05_Deployment_Guide.md`](docs/05_Deployment_Guide.md)
 | [`06_Project_Overview.md`](docs/06_Project_Overview.md) | Plain-language orientation — start here |
 | [`08_Testing_Validation_Prompt.md`](docs/08_Testing_Validation_Prompt.md) | 6-phase QA verification prompt |
 | [`13_Closed_Loop_Validation_Update.md`](docs/13_Closed_Loop_Validation_Update.md) | Closed-loop replay method, gate results, and the lead-time correction |
+| [`14_Security_Posture.md`](docs/14_Security_Posture.md) | Measured attack surface, response-header and CORS evidence, dependency audit results, accepted risks |
 
 ## Related
 
