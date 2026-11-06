@@ -152,6 +152,40 @@ def refresh_label(rs: dict) -> str:
     return f"running, {rs['rows']:,} rows published"
 
 
+def sent(text: str) -> str:
+    """Sentence-case a measured string. str.capitalize() is wrong for this: it
+    lower-cases everything past the first character, which silently rewrites a
+    measured token like '401 Unauthorized' as read from /health."""
+    return text[:1].upper() + text[1:]
+
+
+def currency_cause(rs: dict) -> str:
+    """Why the served frame is not current, read from the live data_refresh block.
+
+    Hard-coding "the token is rejected" was true on 6 November and would quietly
+    become a lie if the failure turned into a timeout or the refresher were switched
+    off, so each branch keys off a measured field instead.
+    """
+    if rs["publishing"]:
+        return ""
+    if not rs["reported"]:
+        return ("No refresh block is published on this /health build, so no cause is "
+                "recorded here; the served frame is whatever the committed feature file holds.")
+    if not rs["enabled"]:
+        return ("The cause is configuration: the deployed refresher is disabled "
+                "(GRIDSENSE_REFRESH=false), which is a deliberate platform setting rather "
+                "than a failure.")
+    if rs["unauthorized"]:
+        return (f"The cause is a credential state, not a code defect: {rs['unauthorized']}/"
+                f"{len(rs['zones'])} zones returned 401 Unauthorized against the ENTSO-E token "
+                f"held in the platform secret store on this /health build.")
+    outcomes = [str((v or {}).get("outcome") or "no outcome published")
+                for v in rs["zones"].values()]
+    return (f"No zone returned 401 on this /health build; the measured per-zone outcomes are "
+            f"{', '.join(sorted(set(outcomes))) or 'not published'}, and the redacted error text "
+            f"is published directly on /health rather than repeated here.")
+
+
 class Report(FPDF):
     def __init__(self, unicode_fonts: bool):
         super().__init__(orientation="P", unit="mm", format="A4")
@@ -886,7 +920,7 @@ def main() -> int:
              "number stale by up to two days",
              "Scheduled ingestion -> retrain -> artifact swap -> smoke test, with serving_window_end within the "
              "source's own publication lag",
-             f"PARTIAL - request-time ingestion is shipped and deployed and {refresh_label(rs).lower()}; the "
+             f"PARTIAL - request-time ingestion is shipped and deployed and {refresh_label(rs)}; the "
              "retrain and artifact-swap stages are not built"],
             ["Numerical weather input (NWP) feed",
              "Persistence weather understates error during exactly the events that matter - a heat wave or a "
