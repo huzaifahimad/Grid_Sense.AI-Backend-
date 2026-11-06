@@ -140,9 +140,16 @@ own pins every sibling subdomain to HTTPS for months on someone else's behalf.
   query string that requests/urllib3 quote into those messages, `config.redact_secrets` strips
   credential-shaped parameters and every stored message passes through it **before** the length cap
   (a cap applied first can drop the `&` that terminates the parameter and leave half a token).
-  Verified by `test_published_error_never_carries_the_token`, which asserts on the real token value
-  inside a message copied from the live failure payload, and by
-  `test_redaction_runs_before_the_length_cap`.
+  The rule is applied at every site that converts an exception into text, not only where the text is
+  stored — enumerated with `grep -rn "str(e)\|repr(e)\|exc_info=True\|format_exc\|{e}" api/
+  ingestion/ models/ features/ config.py`. That sweep found one site still printing raw:
+  `ingestion/entsoe_client.pull_all_zones`, whose per-zone failure goes to stdout, i.e. the log
+  stream of a deployed process. It now calls `redact_secrets` itself instead of relying on
+  `pull_load` having redacted before raising. Verified by
+  `test_published_error_never_carries_the_token`, which asserts on the real token value inside a
+  message copied from the live failure payload, by `test_redaction_runs_before_the_length_cap`, and
+  by `test_offline_pull_stdout_never_carries_the_token` (negative control measured first: the same
+  exception printed raw yields `leak in raw: True`, redacted yields `False`).
 
 ## 5. Accepted risks — explicit, with the condition that would change the answer
 
@@ -213,9 +220,9 @@ may be running — and is left as an explicit decision.
 
 ## 8. Test evidence
 
-`python -m pytest tests -q` on 2026-11-06T11:05Z: **89 passed**, 1 warning (an httpx `app=`
+`python -m pytest tests -q` on 2026-11-06T11:21Z: **90 passed**, 1 warning (an httpx `app=`
 deprecation in the test client, not in product code). The 63-test run recorded earlier the same day
-has since grown by `tests/test_live_refresh.py` (26 tests), which is where the security-relevant
+has since grown by `tests/test_live_refresh.py` (27 tests), which is where the security-relevant
 coverage of the new egress path lives:
 
 - `test_the_refresh_client_really_calls_the_http_layer` — real entsoe-py client, only
@@ -223,8 +230,18 @@ coverage of the new egress path lives:
 - `test_published_error_never_carries_the_token` — the credential value must be absent from
   `/health` while the root cause is still present.
 - `test_redaction_runs_before_the_length_cap` + `test_credential_pattern_covers_the_parameter_spellings_used`.
+- `test_offline_pull_stdout_never_carries_the_token` — the ingestion script's own failure print is
+  redacted, so the credential cannot reach the deployed log stream.
 - `test_egress_failure_leaves_the_frame_serving` — a failed fetch changes nothing the caller sees.
 - `test_cache_window_blocks_the_next_kick` — request volume cannot amplify egress.
+
+**Limitation of the evidence above.** These runs execute on this machine's interpreter, whose
+package versions differ from the pins in `requirements-api.txt` that the deployed process installs
+(local pandas 2.3.3 / requests 2.31.0 / fastapi 0.104.1 / pyarrow 23.0.1 vs pinned
+pandas 3.0.2 / requests 2.34.2 / fastapi 0.141.1 / pyarrow 25.0.1). Every pin was confirmed to exist
+on PyPI with installable wheels and a compatible `requires-python` on 2026-11-06T11:14Z, so the
+build itself is not at risk; what is not yet proven by these 90 tests is behaviour under the pinned
+pandas major version. §10 item 5 is the ranked action for that drift.
 
 CI on commit `b8c5651` completed with `conclusion=success`, and the per-step record proves the
 new gate executed rather than being skipped:
@@ -239,7 +256,29 @@ from scratch, so it is the first evidence that the suite passes against fastapi 
 pandas 3.0.2 rather than the drifted local versions in §6.1 — which is exactly the distinction
 the drift check exists to make visible.
 
-## 9. What remains, in order of value
+## 9. Deployed-bundle evidence (2026-11-06T11:15Z)
+
+The failure class that bit this project once was a green build with 500 endpoints: the upload
+ignore-list excluded a module the request path imports at request time. `.fastapicloudignore`
+excludes `ingestion/` file-by-file rather than as a directory precisely so the two modules the
+refresher needs survive. A list that long is easy to get wrong, so the claim was tested by
+reconstructing the upload set locally (gitignore semantics: last matching rule wins, `!`
+re-includes) and running the API out of that stripped directory.
+
+- 14 endpoints requested from inside the bundle — `/`, `/health`, `/assets`, `/validation`,
+  `/docs`, `/openapi.json`, three `/forecast/*`, three `/risk/*`, two `/shed-schedule/*` — all
+  returned **200**, exit code 0. `ingestion/entsoe_client.py` resolved from the bundle.
+- The refresher's ENTSO-E and weather imports are **lazy**, inside the functions
+  (`api/live_refresh.py:298`, `:442`, `:483`), so a source grep for module-level imports cannot see
+  them and a no-key start never executes them. Forcing the refresh inside the bundle with a fake
+  token resolved all three.
+- With that fake token the bundle reached the **real** SOP endpoint and got
+  `HTTPError: 401 Client Error: Unauthorized for url: https://web-api.tp.entsoe.eu/api?...` —
+  direct confirmation that the one-attempt configuration actually performs egress, which the
+  previous `retry_count=0` did not. The zone recorded outcome `failed`, **0 rows published**, and
+  the stored `last_error` (179 chars) contained neither the token nor any part of it.
+
+## 10. What remains, in order of value
 
 1. **Replace pickle loading** with a non-code-executing artifact format. This is the only accepted
    risk above that could turn into code execution.

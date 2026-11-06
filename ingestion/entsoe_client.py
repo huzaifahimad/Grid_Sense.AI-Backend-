@@ -202,7 +202,11 @@ def pull_all_zones(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
             df = pull_load(zone_code, country_code, start, end)
             frames.append(df)
         except Exception as e:
-            print(f"[entsoe]   FAILED for {country_code}: {e}")
+            # Same rule as every other site that turns an exception into text: this
+            # goes to stdout, which is the log stream in a deployed process, and a
+            # requests/urllib3 message quotes the full request URL with the token in
+            # its query string.
+            print(f"[entsoe]   FAILED for {country_code}: {redact_secrets(e)}")
             continue
 
     if not frames:

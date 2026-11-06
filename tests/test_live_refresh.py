@@ -463,6 +463,32 @@ def test_credential_pattern_covers_the_parameter_spellings_used(param):
     assert out.endswith("&offset=0")
 
 
+def test_offline_pull_stdout_never_carries_the_token(monkeypatch, capsys):
+    """
+    pull_all_zones prints each zone failure, and stdout is the log stream of a
+    deployed process. The text it prints happens to be built redacted today, but
+    this site catches *any* exception out of pull_load — so it applies the rule
+    itself rather than depending on the callee to have redacted before raising.
+    """
+    import ingestion.entsoe_client as ec
+
+    secret = "7b41d9c0e2af4855"
+
+    def refused(zone_code, country_code, start, end, *a, **k):
+        raise RuntimeError(f"Max retries exceeded with url: /api?documentType=A75"
+                           f"&securityToken={secret}&offset=0")
+
+    monkeypatch.setattr(ec, "pull_load", refused)
+    with pytest.raises(RuntimeError):
+        ec.pull_all_zones(pd.Timestamp("2026-11-01", tz="UTC"),
+                          pd.Timestamp("2026-11-02", tz="UTC"))
+
+    out = capsys.readouterr().out
+    assert secret not in out, "the zone failure was printed verbatim"
+    assert "securityToken=[REDACTED]" in out
+    assert "documentType=A75" in out, "redaction should not eat the rest of the message"
+
+
 # ------------------------------------------------------------
 # Through the API
 
