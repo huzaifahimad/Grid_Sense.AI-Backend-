@@ -26,6 +26,23 @@ python scripts/verify_model_accuracy.py --skip-live   # 10 checks, artifacts onl
 No key, no local server, and no network needed for `--skip-live`. The
 developer's own uvicorn on port 8123 was not touched by any measurement here.
 
+**These numbers do not depend on this machine's package versions.** The runs above
+executed on the developer's interpreter, which has drifted from the pins the
+deployment installs (docs/14 §6.1). The entire `--skip-live` set was therefore
+re-run in a throwaway venv built from `requirements-api.txt` verbatim — pandas
+3.0.2, numpy 2.4.4, scikit-learn 1.8.0, lightgbm 4.7.0, pyarrow 25.0.1, fastapi
+0.141.1, requests 2.34.2 — and returned **10 checks / 10 passed / 0 failed**
+(2026-11-06T11:36:05Z, exit 0) with every figure identical to the ones this
+document publishes: PR-AUC 0.9268, Brier skill 0.7204, aggregate recall 0.7844,
+GR precision 0.8601 / recall 0.9318, IT_SOUTH recall 0.4556, and the util ladder
+topping out at 0.490872. A different pandas major version changes no metric here.
+Re-check it yourself:
+
+```bash
+python -m venv .venv-pinned && .venv-pinned/Scripts/pip install -r requirements-api.txt pytest
+.venv-pinned/Scripts/python scripts/verify_model_accuracy.py --skip-live
+```
+
 ---
 
 ## 1. What was proven
