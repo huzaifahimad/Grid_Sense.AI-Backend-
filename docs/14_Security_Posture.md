@@ -302,6 +302,22 @@ re-includes) and running the API out of that stripped directory.
   `test_the_refresh_records_how_long_the_fetch_took`,
   `test_shipped_timeout_leaves_room_for_a_real_entsoe_response` and
   `test_health_publishes_the_timeout_in_force` (94 passed, pinned env).
+- **The 30 s ceiling was the right number, and it exposed the real blocker.** Observed live at
+  12:04:02Z: `timeout_seconds` 30.0, `last_attempt_seconds` 30.608, per-zone `load_seconds` of
+  **11.787 / 10.582 / 8.006** — every zone now receives an HTTP answer instead of being cut off
+  mid-wait, so the `ReadTimeout` failure class is gone. The answer is
+  `HTTPError: 401 Client Error: Unauthorized` for all three zones. That is not a timeout, not a
+  code defect, and not something a repo change can fix: it is the `ENTSOE_API_KEY` held in FastAPI
+  Cloud's secret store being **rejected by ENTSO-E**. The identical request path returned two years
+  of real load on 2026-11-03 through a token that was accepted, so the pipeline is capable and the
+  deployed credential is not. The app degrades exactly as designed meanwhile: `rows_added_total`
+  stays 0, `last_success_at` stays null, `/forecast/ES` `origin_timestamp` stays
+  `2026-11-04T17:00:00+00:00`, and `serving_newest` plus `origin_age_hours` report that age
+  honestly rather than presenting the frame as current.
+- **Redaction held under production traffic.** The published 401 reason ends
+  `...&securityToken=[REDACTED]&periodStart=202611041800&periodEnd=202611061200` — credential gone,
+  and the middle-elision is what preserves both ends: the requested period stays readable inside a
+  300-char cap that a head slice would have thrown away.
 
 ## 10. What remains, in order of value
 
@@ -312,9 +328,13 @@ re-includes) and running the API out of that stripped directory.
 3. **Rated MW capacity** from an operator source (NTDC for the current ENTSO-E stand-in zones), so
    `capacity_mw` stops being a p99 proxy.
 4. **App-level rate limiting** before the endpoint faces untrusted traffic at volume.
-5. **Observe one row-producing live refresh in the deployed process.** §9 proves the deployed bundle
-   performs egress and records a token-free failure; it cannot prove a *success*, because the real
-   `ENTSOE_API_KEY` exists only in FastAPI Cloud's secret store. The check is
-   `/health.data_refresh.last_success_at` and `rows_added_total` moving on the live host, then
-   `/forecast/ES` `origin_timestamp` advancing. Local pinned-env coverage is no longer the gap — §8
-   records the suite and the verifier both green on the deployed pins.
+5. **Fix the deployed credential, then observe one row-producing refresh.** Egress, timeout sizing
+   and error hygiene are all now proven on the deployed bundle (§9); the last thing standing between
+   the live API and current data is that its stored `ENTSOE_API_KEY` is answered with **401
+   Unauthorized**. Either replace that secret in FastAPI Cloud's dashboard with a token whose
+   "Restful API access" request ENTSO-E has approved, or set `GRIDSENSE_REFRESH=false` and stop
+   spending a 30-second attempt per cache window on a credential that cannot succeed. The check that
+   closes it is `/health.data_refresh.last_success_at` and `rows_added_total` moving on the live
+   host, then `/forecast/ES` `origin_timestamp` advancing past `2026-11-04T17:00Z`. Local
+   pinned-env coverage is no longer the gap — §8 records the suite and the verifier both green on
+   the deployed pins.
