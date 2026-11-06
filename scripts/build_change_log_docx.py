@@ -157,6 +157,13 @@ def main() -> int:
     suite_line = next((l for l in suite.splitlines() if " passed" in l or " failed" in l),
                       "pytest produced no summary line")
 
+    # The accuracy numbers quoted in commit bodies are re-derived here rather than
+    # trusted: --skip-live keeps the check to the committed artifacts.
+    accuracy = sh([sys.executable, str(BACKEND / "scripts/verify_model_accuracy.py"),
+                   "--skip-live"], cwd=str(BACKEND), timeout=1800)
+    acc_line = next((l.strip() for l in accuracy.splitlines() if l.startswith("checks run")),
+                    "verify_model_accuracy produced no summary line")
+
     routes = ["/health", "/validation", "/assets", "/forecast/ES", "/risk/ES",
               "/shed-schedule/IT_SOUTH", "/forecast/NOPE"]
     route_rows = [[r, http_code(f"{API}{r}")] for r in routes]
@@ -250,6 +257,8 @@ def main() -> int:
         ["Capacity basis", prov.get("capacity", "n/a")],
         ["Synthetic data in use", str(prov.get("is_synthetic", "n/a"))],
         ["Backend test suite", suite_line],
+        ["Independent accuracy recheck", f"{acc_line} (offline subset - re-run the script "
+                                         "without --skip-live to add the deployed-API checks)"],
     ], [2.3, 4.4])
     doc.add_paragraph(
         "The two row counts above are the served window - the in-memory tail the API answers "

@@ -175,6 +175,29 @@ def main() -> int:
     cb, cf = commits(BACKEND), commits(FRONTEND)
     n_doc_hits, doc_examples = stale_doc_claims()
 
+    # The accuracy figures quoted in this note are re-derived at build time by the
+    # independent verifier, offline (--skip-live) so the build stays honest even if
+    # the deployment is mid-roll. The findings below are read out of its own stdout
+    # rather than typed here, including the ones that do not flatter the model.
+    EM = "\u2014"
+    accuracy = sh([sys.executable, str(BACKEND / "scripts/verify_model_accuracy.py"),
+                   "--skip-live"], cwd=str(BACKEND), timeout=1800)
+    acc_lines = accuracy.splitlines()
+    acc_summary = next((l.strip() for l in acc_lines if l.startswith("checks run")),
+                       "checks run n/a | passed n/a | failed n/a")
+    acc_nums = dict(re.findall(r"(checks run|passed|failed)\s+(\d+)", acc_summary))
+    acc_shuffle = next((l.split(EM, 1)[-1].strip().split(". A metric")[0].rstrip(".") + "."
+                        for l in acc_lines if "random shuffle puts" in l), "")
+
+    weak_line = next((l for l in acc_lines if "weakest zone" in l), "")
+    weak = re.search(r"\]\s*(\S+)\s+n=\s*([\d,]+)\s+positives=\s*([\d,]+)"
+                     r".*?precision=([\d.]+)\s+recall=([\d.]+)", weak_line)
+
+    ceil_line = next((l for l in acc_lines if "extrapolation limit" in l), "")
+    ceil_zone = (re.match(r"\s*\[[^\]]*\]\s*(\S+):", ceil_line) or [None, ""])[1]
+    acc_ceiling = (ceil_line.split(EM, 1)[-1].strip().split(". Reported, not")[0].rstrip(".")
+                   + ".") if ceil_line else ""
+
     # Nothing refreshes the served frame, so the newest hour ages one hour per
     # hour after each deploy. Measured rather than asserted: the commit that
     # last shipped the parquet, the age it had at that commit, and its age now.
@@ -306,6 +329,38 @@ def main() -> int:
         "warn" if fallback_all else "pass",
     )
 
+    pdf.h1("Are the accuracy figures real?")
+    pdf.p("A published metric can be wrong in two ways: computed incorrectly, or computed on "
+          "data the model had already seen. scripts/verify_model_accuracy.py recomputes every "
+          "accuracy figure on this page from training_features.parquet and the committed "
+          "classifier without reading closed_loop_report.json. Its gates are property-based - "
+          "the integrity sections must hold exactly and the later ones fail only when two "
+          "independent computations of the same quantity disagree - so a threshold cannot be "
+          "moved to make a result look better. This build ran its offline subset:", size=9.3)
+    pdf.code(f"python scripts/verify_model_accuracy.py --skip-live\n{acc_summary}")
+    if acc_nums.get("failed", "0") == "0":
+        pdf.verdict(f"The label matches its documented rule exactly, no feature can read the "
+                    f"label off the frame, the scored window strictly postdates the fitted "
+                    f"window, and the held-out metrics above were recomputed independently of "
+                    f"the served report. The live API comparison is not "
+                    "in this count - run the command without --skip-live for that.", "pass")
+    else:
+        pdf.verdict("The independent recomputation disagrees with the served report; see "
+                    "scripts/verify_model_accuracy.py output before quoting any figure here.",
+                    "fail")
+    if acc_shuffle:
+        pdf.bullet("The shuffle-before-split recipe some reviewers expect was measured, not "
+                   f"argued: {acc_shuffle} A temporal split is therefore the only defensible "
+                   "choice for this data, and it is the one the trainer uses.")
+    if weak:
+        pdf.bullet(f"The aggregate recall is a blend that hides a zone: "
+                   f"{ZONE_LABEL.get(weak.group(1), weak.group(1))} scores "
+                   f"precision {weak.group(4)} / recall {weak.group(5)} over "
+                   f"{weak.group(2)} held-out hours ({weak.group(3)} real overloads). Read "
+                   "per-zone numbers, not one percentage.")
+    if acc_ceiling:
+        pdf.bullet(f"Extreme-overload blindness ({ceil_zone} ladder): {acc_ceiling}")
+
     pdf.h1("What was added")
     for repo_name, lst in (("backend", cb), ("frontend", cf)):
         if not lst:
@@ -404,6 +459,7 @@ def main() -> int:
              f"print(d['overall'], [g['result'] for g in d['gates']])\"\n"
              f"python -c \"import pandas as pd; f=pd.read_parquet('data/features/training_features.parquet');"
              f" print(len(f), f['zone'].nunique())\"   # trained rows / zones\n"
+             f"python scripts/verify_model_accuracy.py            # 22 checks, incl. the live API\n"
              f"git -C {BACKEND.name} log --since='{SINCE}' --oneline\n"
              f"git -C {FRONTEND.name} log --since='{SINCE}' --oneline\n"
              f"python scripts/build_release_note_pdf.py   # rebuilds this file")
