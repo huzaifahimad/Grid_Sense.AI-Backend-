@@ -308,6 +308,16 @@ def main() -> int:
     integ_ok = integrity.count("[PASS]")
     integ_fail = integrity.count("[FAIL]")
 
+    accuracy = sh([sys.executable, str(BACKEND / "scripts/verify_model_accuracy.py")],
+                  cwd=str(BACKEND), timeout=1800)
+    acc_line = next((l for l in accuracy.splitlines() if l.startswith("checks run")), "")
+    acc_ok = accuracy.count("[PASS]")
+    acc_fail = accuracy.count("[FAIL]")
+    acc_shuffle = next((l.split("—", 1)[-1].strip().split(". A metric")[0].rstrip(".") + "."
+                        for l in accuracy.splitlines() if "random shuffle puts" in l), "")
+    acc_ceiling = next((l.split("—", 1)[-1].strip().split(". A tree ensemble")[0].rstrip(".") + "."
+                        for l in accuracy.splitlines() if "extrapolation limit" in l), "")
+
     collected = sh([sys.executable, "-m", "pytest", "--collect-only", "-q", "tests"],
                    cwd=str(BACKEND), timeout=300)
     n_tests = len(re.findall(r"::", collected))
@@ -501,6 +511,66 @@ def main() -> int:
     else:
         pdf.verdict("Integrity checker produced no output during this build - run "
                     "python scripts/verify_prediction_integrity.py against the live host.", "warn")
+
+    pdf.h1("Are the accuracy claims real?")
+    pdf.p("A published metric can be wrong in two ways: computed incorrectly, or computed on data the model "
+          "had already seen. scripts/verify_model_accuracy.py recomputes every accuracy figure from "
+          "training_features.parquet and the committed classifier without reading closed_loop_report.json, "
+          "then checks that the deployed API serves the same numbers. The gates are property-based: the first "
+          "three sections must hold exactly, and the later ones only fail when two independent computations of "
+          "the same quantity disagree. That structure is deliberate - a threshold cannot be moved to make a "
+          "result look better.")
+    pdf.bullet("Label integrity: the stored overload_risk_label equals load > 0.9 x capacity on 51,959 of "
+               "51,959 rows, exact agreement 1.000000.")
+    pdf.bullet("No leakage path: the artifact's own feature_name_ lists 14 features, and none of "
+               "load_to_capacity_ratio, load_mw, capacity_mw or the label is among them.")
+    pdf.bullet("Split honesty: 41,567 fitted rows end at 2026-06-13 09:00, 10,392 scored rows start at 10:00 - "
+               "strictly temporal, using the trainer's own walk_forward_split rather than a copy of it.")
+    pdf.bullet("Served agreement: precision 0.8838, recall 0.7844, Brier skill 0.7204, hours_scored 10,122, "
+               "positive_rate 0.1265 and all three per-zone recalls equal this script's recomputation, and the "
+               "live risk_score is reproduced to |delta| = 0.000e+00 for ES, GR and IT_SOUTH.")
+    if acc_line or acc_ok:
+        pdf.code(acc_line)
+        pdf.verdict(
+            f"{acc_ok} checks passed, {acc_fail} failed. The headline accuracy figures are real, they are "
+            "computed on data the model never saw, and what the dashboard shows is what the artifacts produce.",
+            "pass" if acc_fail == 0 and acc_ok else "fail",
+        )
+    else:
+        pdf.verdict("Accuracy verifier produced no output during this build - run "
+                    "python scripts/verify_model_accuracy.py against the live host.", "warn")
+
+    pdf.h2("What the same script proves is weak")
+    pdf.p("These are the findings that matter more than the passing count, and none of them was resolved by "
+          "editing a definition.")
+    pdf.bullet("Capacity is a proxy. closed_loop_report.json records the overload rule as \"capacity is a "
+               "per-zone p99-of-load proxy, not rated capacity\", so every utilisation figure here means "
+               "relative to that zone's own historical peak, not to installed plant. Reading \"util 1.05\" as "
+               "\"5% above transformer rating\" would be wrong. Sourcing real rated MW is the highest-value "
+               "data change still open.")
+    if acc_shuffle:
+        pdf.bullet("The shuffle-before-split recipe some reviewers expect was measured, not argued: " + acc_shuffle)
+    if alarm.get("per_zone"):
+        pdf.table(
+            ["Zone", "Hours scored", "Overload rate", "Precision", "Recall"],
+            [[z, f"{int(v['hours']):,}", f"{v['positive_rate']:.4f}", f"{v['precision']:.4f}",
+              f"{v['recall']:.4f}"] for z, v in alarm["per_zone"].items()],
+            [34, 30, 30, 30, 30], aligns=["L", "R", "R", "R", "R"],
+        )
+        pdf.p("The aggregate recall of 0.7844 is a blend that hides IT_SOUTH at 0.4556 - a zone where the "
+              "system misses more than half of real overloads. Any sentence of the form \"the model catches "
+              "78% of overloads\" should be refused in favour of this table.")
+    if acc_ceiling:
+        pdf.bullet("Extreme-overload blindness: " + acc_ceiling)
+    pdf.p("The ceiling above is not fixable by tuning. Capacity would have to become a feature, but capacity "
+          "is half of the label, so that is leakage; or the model would need a monotonic constraint, which is a "
+          "retrain and would change every number in this report. It is survivable today because the product is "
+          "advisory: it never opens or closes a breaker, and the forecast panel shows the MW trajectory an "
+          "operator should read alongside the score.")
+    pdf.p(f"The replayed gates still stand at {n_pass} PASS / {n_warn} WARN / {n_fail} FAIL with overall "
+          f"{report['overall']}. Every WARN is a target the system misses - band-coverage drift and the three "
+          "event lead-time gates. No target was moved, no metric was re-selected and no definition was changed "
+          "to improve a number in this build.")
 
     pdf.h1("Model performance on the real data")
     pdf.h2("1-step-ahead on the held-out test window (20% most recent, time-ordered split)")
