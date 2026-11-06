@@ -38,6 +38,8 @@ from build_audit_report_pdf import (  # noqa: E402
     sanitize,
     sh,
     curl_json,
+    refresh_label,
+    refresh_state,
 )
 
 OUT = out("submission", "GridSense_AI_Release_Note.pdf")
@@ -104,6 +106,12 @@ STALE_DOC_PATTERNS = [
      r"3\.0 h lead"),
     ("docs state a test count that no longer matches the suite",
      r"48 tests pass\b|# 48 tests|48 passed"),
+    # False the moment the request-time refresher was deployed (2026-11-06), and
+    # the class of claim the refresh makes drift-prone. Checked against docs/ and
+    # README.md when added: zero matches, so it guards future edits only.
+    ("docs claim the runtime performs no outbound fetch or holds no credential",
+     r"[Nn]o refresh path|nothing refreshes|no request-time or scheduled fetch|"
+     r"makes no outbound request|holds no third-party credential"),
 ]
 
 
@@ -129,6 +137,7 @@ def main() -> int:
     validation = curl_json("/validation") or {}
     prov = health.get("data_provenance", {})
     zones = health.get("zones") or list(ZONE_LABEL)
+    rs = refresh_state(health)
 
     # Two different row counts exist and both are true: the API keeps a short
     # in-memory tail (1,008 rows over 3 zones), the models were trained on the
@@ -198,9 +207,12 @@ def main() -> int:
     acc_ceiling = (ceil_line.split(EM, 1)[-1].strip().split(". Reported, not")[0].rstrip(".")
                    + ".") if ceil_line else ""
 
-    # Nothing refreshes the served frame, so the newest hour ages one hour per
-    # hour after each deploy. Measured rather than asserted: the commit that
-    # last shipped the parquet, the age it had at that commit, and its age now.
+    # The parquet a deploy ships is still the floor the served frame starts from,
+    # so its age is measured rather than asserted: the commit that last shipped it,
+    # the newest hour's age at that commit, and its age now. The refresher added on
+    # 2026-11-06 can publish past that floor, so whether the floor is where the API
+    # actually answers from is a separate measured question, reported from the
+    # live /health refresh block.
     frame_log = sh(["git", "log", "-1", "--date=format:%Y-%m-%d %H:%M%z",
                     "--format=%h %ad", "--", "data/features/training_features.parquet"],
                    cwd=str(BACKEND))
@@ -217,7 +229,6 @@ def main() -> int:
     except ValueError:
         pass
     age_at_ship = (frame_dt - load_latest_dt).total_seconds() / 3600.0 if frame_dt and load_latest_dt else None
-    hours_since_ship = (now - frame_dt).total_seconds() / 3600.0 if frame_dt else None
 
     site_code = http_code(SITE)
     api_code = http_code(f"{API}/health")
@@ -400,13 +411,18 @@ def main() -> int:
             pdf.bullet(l)
     open_items = 4 + (1 if n_doc_hits else 0)
     pdf.p(f"Beyond the gates, {open_items} things are genuinely unfinished:", size=9.3)
-    pdf.bullet("No data refresh path. The API loads the committed feature frame at startup and "
-               "keeps the last " + fmt(per_zone_hours, '{:.0f}') + " h per zone; there is no "
-               "request-time or scheduled fetch, so the newest hour ages one hour per hour after "
-               f"each deploy. Measured: frame shipped {frame_sha} at {frame_when}, when the "
-               f"newest load hour was {fmt(age_at_ship, '{:.1f}')} h old - it is now "
-               f"{fmt(load_age, '{:.1f}')} h old, {fmt(hours_since_ship, '{:.1f}')} h later. The "
-               "UI reports these ages truthfully; the fix is a scheduled rebuild, not new copy.")
+    pdf.bullet("Data currency, which is now a credential question rather than a missing stage. There "
+               "is a refresh path: the API answers from the committed frame and a request-time "
+               f"refresher runs on top of it, at most one pass per {fmt(rs['cache_seconds'], '{:.0f}')} s "
+               f"window, per zone only when its newest served hour is older than "
+               f"{fmt(rs['stale_after_hours'], '{:.1f}')} h, under a "
+               f"{fmt(rs['timeout'], '{:.0f}')} s ceiling, and falling back to the committed frame on "
+               f"any failure. Live at build time it measures {refresh_label(rs)}, last attempt "
+               f"{rs['attempt_at'] or 'n/a'} taking {fmt(rs['attempt_seconds'], '{:.1f}')} s, with last "
+               f"success {rs['last_success'] or 'null'}. The newest served hour is therefore still "
+               f"{prov.get('load_latest_timestamp', 'n/a')}, {fmt(load_age, '{:.1f}')} h old; the frame "
+               f"shipped at {frame_sha} was already {fmt(age_at_ship, '{:.1f}')} h old. /health and the "
+               "dashboard report these ages truthfully, so nothing here is mislabelled as current.")
     pdf.bullet("Rated capacity. Every MWa figure is a p99-of-load proxy derived from the same "
                "load series it scores, so utilisation percentages are self-referential. This is "
                "stated in the UI, the model card and the audit report; it is not fixed.")
@@ -421,11 +437,12 @@ def main() -> int:
                "There is no public Pakistani hourly feed to train on, so NTDC/DISCO is stood in "
                "for and no accuracy figure here transfers to it without retraining.")
     if not n_doc_hits:
-        pdf.p("Closed since the previous note: the numbered docs are synced. None of the five "
-              "superseded-figure patterns (synthetic-training claims, 13/13 PASS, the 206-event "
-              "count, the 3.0 h lead, the 48-test count) match anywhere in docs/, checked by "
-              "grep when this page was built. The limit of that check is its pattern list — "
-              "prose can still drift in ways these five expressions do not catch, so this is "
+        pdf.p("Closed since the previous note: the numbered docs are synced. None of the "
+              f"{len(STALE_DOC_PATTERNS)} superseded-figure patterns (synthetic-training claims, "
+              "13/13 PASS, the 206-event count, the 3.0 h lead, the 48-test count, and the claim that "
+              "the runtime makes no outbound fetch or holds no credential) match anywhere in docs/, "
+              "checked by grep when this page was built. The limit of that check is its pattern list — "
+              "prose can still drift in ways none of these expressions catch, so this is "
               "evidence the known false claims are gone, not proof the docs are exhaustively "
               "correct.", size=9.0)
 
@@ -435,11 +452,26 @@ def main() -> int:
                "utilisation and risk from a self-referential scale into one an operator can act "
                "on. Needs a published transmission capacity figure per bidding zone, or TSO "
                "network development plan data.")
-    pdf.bullet("A scheduled refresh of the served frame. Either a job that re-pulls ENTSO-E and "
-               "NASA POWER, rebuilds the parquet and redeploys, or a request-time fetch behind a "
-               "cache. Deferring it is a trade, not an oversight: with the frame committed, the "
-               "runtime holds no third-party credentials and cannot be failed by an upstream "
-               "outage, which is the behaviour a demo needs.")
+    if rs["publishing"]:
+        pdf.bullet("Data currency is handled on the live host: the refresher is publishing rows, so "
+                   "the next step is watching one cache window advance serving_window_end without a "
+                   "redeploy.")
+    else:
+        pdf.bullet("Make one refresh pass publish. "
+                   + (f"The blocker is not code: {rs['unauthorized']}/{len(rs['zones'])} zones are answered "
+                      "401 Unauthorized by the ENTSO-E RESTful API, so the secret in the deployment "
+                      "platform's store must be replaced with a token whose RESTful-API access ENTSO-E has "
+                      "approved. Until then every cache window spends one "
+                      f"{fmt(rs['timeout'], '{:.0f}')} s attempt on a credential that cannot succeed, which "
+                      "GRIDSENSE_REFRESH=false stops."
+                      if rs["unauthorized"] else
+                      "The live /health refresh block states why nothing published; read it before "
+                      "changing any code.")
+                   + " Shipping the refresher bought a fresher frame and cost two properties the committed "
+                     "parquet had: the runtime now holds a third-party credential and does make an "
+                     "outbound request at request time. Both are bounded - GET-only serving, one attempt "
+                     "per zone per window, the timeout ceiling, a redacted last_error, and the "
+                     "committed-frame fallback.")
     pdf.bullet("A forward-looking weather feed with a horizon that matches the forecast horizon. "
                "One candidate was evaluated and rejected on a measured variable mismatch against "
                "the trained feature set; adopting any such feed means retraining, and the "

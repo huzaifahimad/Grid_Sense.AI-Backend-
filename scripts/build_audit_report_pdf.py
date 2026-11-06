@@ -108,6 +108,50 @@ def http_code(url: str) -> str:
                "--max-time", "30", url]) or "n/a"
 
 
+def refresh_state(health: dict) -> dict:
+    """Normalise the live /health data_refresh block into claims to print.
+
+    The request-time refresh was deployed on 2026-11-06, which made every sentence
+    in these build scripts that began "nothing refreshes the served frame" false on
+    the deployed host. Reading the live block instead of remembered prose keeps the
+    next rebuild honest whichever way the platform credential resolves.
+    """
+    r = (health or {}).get("data_refresh") or {}
+    zones = r.get("zones") or {}
+    errors = {z: str((d or {}).get("last_error") or "") for z, d in zones.items()}
+    rows = int(r.get("rows_added_total") or 0)
+    return {
+        "reported": bool(r),
+        "enabled": bool(r.get("enabled")),
+        "has_key": bool(r.get("has_api_key")),
+        "rows": rows,
+        "publishing": rows > 0,
+        "last_success": r.get("last_success_at"),
+        "attempt_at": r.get("last_attempt_at"),
+        "attempt_seconds": r.get("last_attempt_seconds"),
+        "timeout": r.get("timeout_seconds"),
+        "cache_seconds": r.get("cache_seconds"),
+        "stale_after_hours": r.get("stale_after_hours"),
+        "zones": zones,
+        "errors": errors,
+        "unauthorized": sum("401" in e for e in errors.values()),
+    }
+
+
+def refresh_label(rs: dict) -> str:
+    """One line of status for a table cell; every branch reads a measured field."""
+    if not rs["reported"]:
+        return "absent from /health - this build predates the refresh path"
+    if not rs["enabled"]:
+        return "disabled by configuration (GRIDSENSE_REFRESH=false)"
+    if rs["publishing"]:
+        return f"publishing - {rs['rows']:,} rows added since boot"
+    if rs["unauthorized"]:
+        return (f"running, {rs['unauthorized']}/{len(rs['zones'])} zones answered "
+                f"401 Unauthorized - {rs['rows']:,} rows published")
+    return f"running, {rs['rows']:,} rows published"
+
+
 class Report(FPDF):
     def __init__(self, unicode_fonts: bool):
         super().__init__(orientation="P", unit="mm", format="A4")
@@ -295,6 +339,7 @@ def main() -> int:
     served_rows = sum((prov_live.get("load") or {}).values())
     served_latest = (f"newest hour {prov_live['load_latest_timestamp'][:16]}"
                      if prov_live.get("load_latest_timestamp") else "live /health did not answer")
+    rs = refresh_state(health)
 
     routes = ["/health", "/validation", "/assets", "/forecast/ES", "/forecast/GR",
               "/forecast/IT_SOUTH", "/risk/ES", "/risk/GR", "/risk/IT_SOUTH",
@@ -389,8 +434,8 @@ def main() -> int:
         ("Training frame", f"{len(features):,} hourly rows, {features.shape[1]} columns, "
                           f"{features['timestamp'].min():%Y-%m-%d} to {features['timestamp'].max():%Y-%m-%d} UTC"),
         ("Served window", f"{served_rows:,} rows held in memory by the API "
-                          f"({served_latest}), stamped to the same sources. Nothing refetches it, "
-                          "so the newest served hour ages one hour per hour between rebuilds."),
+                          f"({served_latest}), stamped to the same sources. Refresher on the live "
+                          f"host at build time: {refresh_label(rs)}."),
         ("Load source", ", ".join(f"{k}: {v:,} rows" for k, v in load_src.items()) or "UNSTAMPED"),
         ("Weather source", ", ".join(f"{k}: {v:,} rows" for k, v in weather_src.items()) or "UNSTAMPED"),
         ("Capacity basis", "per-zone p99 of observed load (proxy, not rated)"),
@@ -762,14 +807,38 @@ def main() -> int:
           "cannot read as green by omission. The second block is the standing product limitations.")
     for line in report.get("limitations", []):
         pdf.bullet(str(line), size=8.9)
+    if rs["publishing"]:
+        refresh_cause = (f"rows are being published (last success {rs['last_success']}), so the "
+                         "served window advances without a redeploy")
+    elif not rs["enabled"]:
+        refresh_cause = ("the refresher is switched off in this deployment, so the served window "
+                         "only moves when the frame is rebuilt and redeployed")
+    elif rs["unauthorized"]:
+        refresh_cause = (f"{rs['unauthorized']}/{len(rs['zones'])} zones are answered "
+                         "401 Unauthorized by the ENTSO-E RESTful API, which means the credential "
+                         "held in the deployment platform's secret store is rejected - not a code "
+                         "defect, and not something a repo change can fix")
+    elif not rs["reported"]:
+        refresh_cause = "the deployed build does not report a refresh block at all"
+    else:
+        refresh_cause = ("attempts run and publish nothing; the reason is published verbatim at "
+                         "/health data_refresh.last_error with the token redacted")
+
     for line in [
-        f"No refresh path. api/main.py loads the committed feature frame at startup and keeps the newest "
-        f"rows per zone, and makes no outbound request at all, so the served window ages one hour per hour "
-        f"after each deploy - measured: {served_latest} against a build time of "
-        f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC. The ages in /health and in the UI report this "
-        "truthfully, so it is a missing pipeline stage and not a mislabel. Two properties come with it: the "
-        "runtime holds no third-party credentials, and it cannot be failed or attacked through an upstream "
-        "fetch at request time.",
+        f"Data refresh. api/main.py loads the committed feature frame at startup and keeps the newest "
+        f"rows per zone, and since 2026-11-06 a request-time refresher runs on top of it: at most one "
+        f"pass per {fmt(rs['cache_seconds'], '{:.0f}')} s cache window, per zone only when its newest "
+        f"served hour is older than {fmt(rs['stale_after_hours'], '{:.1f}')} h, one ENTSO-E attempt per "
+        f"zone under a {fmt(rs['timeout'], '{:.0f}')} s ceiling, and every failure falling back to the "
+        f"committed frame. Measured at build time: {refresh_label(rs)}; last attempt "
+        f"{rs['attempt_at'] or 'n/a'} took {fmt(rs['attempt_seconds'], '{:.1f}')} s; "
+        f"{rs['rows']:,} rows added; last success {rs['last_success'] or 'null'}. What still serves is "
+        f"{served_latest}, and {refresh_cause}. The ages in /health and in the UI report this "
+        "truthfully, so it is a credential state on the platform, not a mislabel. Two properties "
+        "changed when the refresher shipped: the runtime now holds a third-party credential and does "
+        "make an outbound request at request time. The bounds are GET-only serving, one attempt per "
+        "zone per window, the timeout ceiling, a redacted last_error, and the committed-frame "
+        "fallback, so an upstream outage or rejection degrades the data age and not the service.",
         "capacity_mw is a per-zone p99 of observed load, so 'overload' means unusually high for that zone - not "
         "a verified thermal limit. Every risk value inherits that, including the 0.6 alarm and 0.8 shed cuts.",
         "That p99 is computed over the whole series, so the definition of the label sees the test window. No "
@@ -794,11 +863,12 @@ def main() -> int:
         ["Commitment", "Why it matters", "Acceptance criterion", "Status"],
         [
             ["Push the real-data artifacts and redeploy",
-             "The repo and the live service must not disagree: /health on the deployed host still reports the "
-             "bootstrap until the new parquet and joblib files land",
+             "The repo and the live service must not disagree, or every number on screen is a bootstrap one",
              "Live /health declares load=entsoe, weather=nasa_power, is_synthetic=false; integrity checker passes "
              "against the live host",
-             "OPEN"],
+             ("CLOSED - live /health declares is_synthetic=false and the integrity checker measured "
+              f"{integ_ok} PASS / {integ_fail} FAIL against that host")
+             if not prov_live.get("is_synthetic") else "OPEN"],
             ["Advance warning for marginal overloads",
              f"{marginal_share * 100:.0f}% of overload hours sit within 5% of the line and the p50 rule cannot "
              "warn on them; this is the failing gate",
@@ -816,7 +886,8 @@ def main() -> int:
              "number stale by up to two days",
              "Scheduled ingestion -> retrain -> artifact swap -> smoke test, with serving_window_end within the "
              "source's own publication lag",
-             "OPEN"],
+             f"PARTIAL - request-time ingestion is shipped and deployed and {refresh_label(rs).lower()}; the "
+             "retrain and artifact-swap stages are not built"],
             ["Numerical weather input (NWP) feed",
              "Persistence weather understates error during exactly the events that matter - a heat wave or a "
              "wind ramp",

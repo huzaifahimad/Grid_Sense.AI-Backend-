@@ -26,6 +26,8 @@ from build_audit_report_pdf import (  # noqa: E402
     SITE,
     curl_json,
     http_code,
+    refresh_label,
+    refresh_state,
     sh,
 )
 
@@ -150,6 +152,7 @@ def main() -> int:
     health = curl_json("/health") or {}
     validation = curl_json("/validation") or {}
     prov = health.get("data_provenance", {})
+    rs = refresh_state(health)
     gates = validation.get("gates") or []
     counts = Counter(g.get("result") for g in gates)
 
@@ -253,6 +256,7 @@ def main() -> int:
         ["Weather rows held in memory", f"{(prov.get('weather') or {}).get('nasa_power', 'n/a')} rows, "
                                        f"{(prov.get('weather') or {}).get('unavailable', 'n/a')} unavailable"],
         ["Newest load hour", prov.get("load_latest_timestamp", "n/a")],
+        ["Request-time refresher (live /health)", refresh_label(rs)],
         ["Weather lag", f"{prov.get('weather_lag_hours', 'n/a')} hours behind load"],
         ["Capacity basis", prov.get("capacity", "n/a")],
         ["Synthetic data in use", str(prov.get("is_synthetic", "n/a"))],
@@ -260,13 +264,24 @@ def main() -> int:
         ["Independent accuracy recheck", f"{acc_line} (offline subset - re-run the script "
                                          "without --skip-live to add the deployed-API checks)"],
     ], [2.3, 4.4])
+    attempt_tail = ("" if not rs["reported"] else
+                    f" Last attempt {rs['attempt_at'] or 'n/a'} took "
+                    f"{rs['attempt_seconds'] if rs['attempt_seconds'] is not None else 'n/a'} s against a "
+                    f"{rs['timeout'] if rs['timeout'] is not None else 'n/a'} s ceiling; "
+                    f"{rs['rows']:,} rows added and last success "
+                    f"{rs['last_success'] or 'null'}.")
     doc.add_paragraph(
         "The two row counts above are the served window - the in-memory tail the API answers "
         "queries from - not the size of the training frame, which is a different and much larger "
-        "scope and is quantified in the release note and the audit report. Nothing refreshes that "
-        "window at request time or on a schedule: the backend loads the committed feature frame on "
-        "startup, so the newest hour ages one hour per hour between rebuilds, which is why the "
-        "age is published rather than assumed."
+        "scope and is quantified in the release note and the audit report. The backend loads the "
+        "committed feature frame on startup and, since 2026-11-06, also runs a request-time "
+        "refresher over that window at most once per cache interval, per zone only once its newest "
+        "hour is stale, with any failure falling back to the committed frame. Live state measured at "
+        f"build time: {refresh_label(rs)}.{attempt_tail} "
+        + ("The newest hour therefore still ages one hour per hour between rebuilds, which is why the "
+           "age is published rather than assumed."
+           if not rs["publishing"] else
+           "The newest hour therefore advances without a redeploy, and the published age tracks it.")
     )
 
     doc.add_heading("Endpoint behaviour", level=1)
