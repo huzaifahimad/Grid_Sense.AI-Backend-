@@ -241,3 +241,39 @@ def test_forecast_keeps_the_weather_aware_model_when_the_tail_is_not_worth_it(mo
     finally:
         api_main._state.clear()
         api_main._state.update(saved)
+
+
+def test_every_response_carries_security_and_nocache_headers(client):
+    """Measured on the deployed API before this existed: /health returned only
+    Server/Date/Content-Type/Content-Length/vary/cf-cache-status. `no-store` is
+    load-bearing rather than cosmetic here — the dashboard publishes how old the
+    served frame is, and a copy held by any intermediary makes that published age wrong.
+    """
+    for path in ("/", "/health", "/validation", "/assets", "/forecast/ES", "/risk/ES",
+                 "/shed-schedule/ES", "/docs"):
+        r = client.get(path)
+        assert r.headers["X-Content-Type-Options"] == "nosniff", path
+        assert r.headers["Referrer-Policy"] == "no-referrer", path
+        assert r.headers["X-Frame-Options"] == "DENY", path
+        assert r.headers["Content-Security-Policy"] == "frame-ancestors 'none'", path
+        assert r.headers["Strict-Transport-Security"] == "max-age=31536000", path
+        assert r.headers["Cache-Control"] == "no-store", path
+
+
+@pytest.mark.parametrize("path", ["/forecast/{z}", "/risk/{z}", "/shed-schedule/{z}"])
+def test_unknown_zone_rejection_echoes_only_a_bounded_prefix(client, path):
+    """A live probe sent 4,000 characters as a zone and got the entire string back in
+    the 404 body. Zone codes are a closed set, so nothing that long can be a near-miss
+    worth reflecting; an unbounded echo also writes caller-chosen text into logs.
+    """
+    from api import main as api_main
+
+    r = client.get(path.format(z="A" * 4000))
+    assert r.status_code == 404, r.text
+    detail = r.json()["detail"]
+    assert "A" * (api_main.MAX_ZONE_ECHO_CHARS + 1) not in detail
+    assert "A" * api_main.MAX_ZONE_ECHO_CHARS in detail
+    # The zone list is already public on /health, so naming it in the error costs nothing.
+    assert "Known zones" in detail
+    assert len(detail) < 200, detail
+

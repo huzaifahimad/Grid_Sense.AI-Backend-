@@ -189,6 +189,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Set on every response. Verified absent from the deployed API before this existed
+# (a live probe returned only Server/Date/Content-Type/Content-Length/vary/
+# cf-cache-status). `no-store` matters specifically because the dashboard reports how
+# old the served frame is: a copy held by any intermediary would make that number a
+# lie. No CSP `default-src` because /docs and /redoc are served by this same app and
+# need inline scripts; `frame-ancestors` covers the clickjacking case that matters for
+# JSON. No HSTS `includeSubDomains`/`preload` because this host sits on a platform
+# domain this project does not control — claiming those would be overreach.
+_RESPONSE_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "Strict-Transport-Security": "max-age=31536000",
+    "Cache-Control": "no-store",
+}
+
+
+@app.middleware("http")
+async def _response_hygiene(request, call_next):
+    response = await call_next(request)
+    for key, value in _RESPONSE_HEADERS.items():
+        response.headers[key] = value
+    return response
+
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -198,7 +223,18 @@ def _utc_now_iso() -> str:
     return _now_utc().isoformat()
 
 
+# Zone codes are a closed set, so an unmatched segment is always caller noise rather
+# than a near-miss worth echoing back in full. Cap the echo: an unbounded one writes
+# arbitrary attacker-chosen text into every log line and response body downstream.
+MAX_ZONE_ECHO_CHARS = 32
+
+
 def _zone_frame(zone: str) -> pd.DataFrame:
+    if zone not in ENTSOE_ZONES:
+        echo = zone if len(zone) <= MAX_ZONE_ECHO_CHARS else zone[:MAX_ZONE_ECHO_CHARS] + "…"
+        raise HTTPException(
+            404, f"No data for zone '{echo}'. Known zones: {list(ENTSOE_ZONES.keys())}"
+        )
     df = _state["features"]
     zone_df = df[df["zone"] == zone].sort_values("timestamp")
     if zone_df.empty:
