@@ -276,14 +276,32 @@ re-includes) and running the API out of that stripped directory.
   `/docs`, `/openapi.json`, three `/forecast/*`, three `/risk/*`, two `/shed-schedule/*` — all
   returned **200**, exit code 0. `ingestion/entsoe_client.py` resolved from the bundle.
 - The refresher's ENTSO-E and weather imports are **lazy**, inside the functions
-  (`api/live_refresh.py:298`, `:442`, `:483`), so a source grep for module-level imports cannot see
-  them and a no-key start never executes them. Forcing the refresh inside the bundle with a fake
-  token resolved all three.
+  (`_pull_weather_rows`, `_refresh_zone`, `run_refresh`), so a source grep for module-level
+  imports cannot see them and a no-key start never executes them. Forcing the refresh inside
+  the bundle with a fake token resolved all three.
 - With that fake token the bundle reached the **real** SOP endpoint and got
   `HTTPError: 401 Client Error: Unauthorized for url: https://web-api.tp.entsoe.eu/api?...` —
   direct confirmation that the one-attempt configuration actually performs egress, which the
   previous `retry_count=0` did not. The zone recorded outcome `failed`, **0 rows published**, and
   the stored `last_error` (179 chars) contained neither the token nor any part of it.
+- **Pushed to production at 11:40:27Z, that egress proof became a live defect.** With the real
+  key, all three zones failed at 11:42:10Z with `ReadTimeout` and `rows_added_total` stayed 0.
+  Two measurements pinned the cause rather than guessing it: (1) `requests.exceptions.ReadTimeout`
+  is **not** a subclass of `requests.ConnectionError` (measured `__mro__`: ReadTimeout → Timeout →
+  RequestException → OSError → Exception), so entsoe-py's `@retry` never re-attempts a read
+  timeout and `retry_count` cannot rescue it; (2) direct probes of the same URL (11:56:44Z,
+  invalid token, so the server short-circuits before building the document) reached first byte at
+  **15.1 s and 5.4 s**, i.e. the shipped 12 s ceiling sat **below the endpoint's own response
+  floor** and could never have succeeded. The published reason did not say so, because
+  `pull_load` head-truncated the inner cause at 80 chars — the live string ends
+  mid-word at `": Read"`, and the `(read timeout=12)` tail that names the ceiling is the part
+  that was cut. Fixed in one commit: ceiling 12 s → 30 s, one shared `config.error_text`
+  redact-then-middle-elide rule used by both the ingestion client and the API, and
+  `timeout_seconds` / `last_attempt_seconds` / per-zone `load_seconds` published on `/health` so
+  the next sizing is measured. Covered by `test_a_read_timeout_reaches_health_with_its_ceiling_intact`,
+  `test_the_refresh_records_how_long_the_fetch_took`,
+  `test_shipped_timeout_leaves_room_for_a_real_entsoe_response` and
+  `test_health_publishes_the_timeout_in_force` (94 passed, pinned env).
 
 ## 10. What remains, in order of value
 

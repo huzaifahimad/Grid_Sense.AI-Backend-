@@ -352,6 +352,92 @@ def test_egress_failure_leaves_the_frame_serving(clean_state, committed, monkeyp
     assert status["last_success_at"] is None
 
 
+def test_a_read_timeout_reaches_health_with_its_ceiling_intact(clean_state, committed, monkeypatch):
+    """
+    This is the failure the deployed process actually had at 2026-11-06T11:42Z.
+    /health reported
+
+        ReadTimeout: HTTPSConnectionPool(host='web-api.tp.entsoe.eu', port=443): Read
+
+    — 181 characters, cut mid-word. The "(read timeout=NN)" tail is the whole
+    diagnosis and pull_load's own cause formatting threw it away, so the one
+    number needed to size the ceiling was the one number not published. Only the
+    client is stubbed here: the real pull_load and the real refresh path produce
+    the text, which is what makes this the regression test for that slice.
+    """
+    import requests
+    import ingestion.entsoe_client as ec
+
+    upstream = ("HTTPSConnectionPool(host='web-api.tp.entsoe.eu', port=443): "
+                "Read timed out. (read timeout=12)")
+
+    class NeverAnswers:
+        def query_load(self, zone_code, start=None, end=None, **kwargs):
+            raise requests.exceptions.ReadTimeout(upstream)
+
+    monkeypatch.setattr(ec, "get_client", lambda **kw: NeverAnswers())
+    published = []
+    clean_state.run_refresh(_stale_frame(committed), published.append)
+
+    assert published == [], "a timed-out pull must not publish"
+    zone_state = clean_state.status()["zones"][ZONE]
+    assert "load_seconds" in zone_state, \
+        "the zone that timed out is the one whose duration matters"
+    reason = zone_state["last_error"]
+    assert "ReadTimeout" in reason, reason
+    assert "read timeout=12" in reason, \
+        f"the ceiling that caused the failure is not in the published reason: {reason}"
+
+
+def test_the_refresh_records_how_long_the_fetch_took(clean_state, committed, monkeypatch):
+    """
+    Every timeout ceiling in this module should be chosen from a measured duration.
+    Without one in /health, the next reader has exactly what I had at 11:42Z: a
+    failure and no number.
+    """
+    import time
+    import ingestion.entsoe_client as ec
+
+    stale = _stale_frame(committed, age_hours=6)
+
+    def slow_pull(*a, **k):
+        time.sleep(0.05)
+        return make_tail(stale, hours=12)
+
+    monkeypatch.setattr(ec, "get_client", lambda **kw: object())
+    monkeypatch.setattr(ec, "pull_load", slow_pull)
+    clean_state.config.weather_enabled = False
+    clean_state.run_refresh(stale, lambda f: None)
+
+    status = clean_state.status()
+    assert status["zones"][ZONE]["load_seconds"] >= 0.04
+    assert status["last_attempt_seconds"] >= 0.04
+
+
+def test_shipped_timeout_leaves_room_for_a_real_entsoe_response(monkeypatch):
+    """
+    12.0s was measured to fail for all three zones from the deployed process
+    (2026-11-06T11:42:10Z: ES/GR/IT_SOUTH each "ReadTimeout ... read timeout=12",
+    rows_added_total 0) on requests of ~42 hours — a small payload.
+
+    The offline pull that produced the committed frame used entsoe-py's default
+    timeout=None, i.e. no ceiling at all, so the refresh path inherited a limit
+    the proven path never had. The shipped default must stay comfortably above
+    the ceiling that was observed to fail; `budget = timeout_seconds * 3` bounds
+    the whole attempt, and load_seconds reports the real duration afterwards.
+    """
+    assert lr.RefreshConfig().timeout_seconds >= 30.0
+    # from_env, not the dataclass, is what the deployed process builds. Raising one
+    # default and leaving the other at 12 is how a fixed bug stays unfixed.
+    monkeypatch.delenv("GRIDSENSE_REFRESH_TIMEOUT_SECONDS", raising=False)
+    assert lr.RefreshConfig.from_env().timeout_seconds >= 30.0
+
+
+def test_health_publishes_the_timeout_in_force(clean_state):
+    """An operator reading a timeout failure has to be able to see the ceiling."""
+    assert clean_state.status()["timeout_seconds"] == clean_state.config.timeout_seconds
+
+
 def test_unparseable_tail_is_rejected_not_published(clean_state, committed, monkeypatch):
     import ingestion.entsoe_client as ec
 

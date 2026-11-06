@@ -49,6 +49,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -66,7 +67,7 @@ from config import (
     ENTSOE_ZONES,
     OVERLOAD_THRESHOLD_RATIO,
     ZONE_COORDINATES,
-    redact_secrets,
+    error_text,
 )
 from features.build_features import (
     add_cyclic_time_features,
@@ -130,7 +131,14 @@ class RefreshConfig:
     # re-request every cache window forever.
     quiet_after_no_gain_seconds: float = 3600.0
     max_tail_hours: float = 336.0
-    timeout_seconds: float = 12.0
+    # Per-request ceiling handed to entsoe-py. 12.0s was measured to fail: at
+    # 2026-11-06T11:42:10Z every zone in the deployed process died with
+    # "ReadTimeout ... (read timeout=12)" on ~42h requests, while the offline pull
+    # that produced the committed frame used the library default timeout=None, i.e.
+    # no ceiling at all. 30.0s is the same order as the endpoint's observed
+    # response time for a small period and still bounded by budget below;
+    # load_seconds now reports the real duration so the next change is measured.
+    timeout_seconds: float = 30.0
     # Rows kept per zone after a merge. Above the 336 the API loads at startup, so
     # a refresh never drops history another endpoint is relying on, while still
     # bounding memory on a long-lived process.
@@ -150,7 +158,7 @@ class RefreshConfig:
             quiet_after_no_gain_seconds=_env_float(
                 "GRIDSENSE_REFRESH_QUIET_SECONDS", 3600.0),
             max_tail_hours=_env_float("GRIDSENSE_REFRESH_MAX_TAIL_HOURS", 336.0),
-            timeout_seconds=_env_float("GRIDSENSE_REFRESH_TIMEOUT_SECONDS", 12.0),
+            timeout_seconds=_env_float("GRIDSENSE_REFRESH_TIMEOUT_SECONDS", 30.0),
             keep_rows_per_zone=int(_env_float("GRIDSENSE_REFRESH_KEEP_ROWS", 500.0)),
             weather_enabled=_env_bool("GRIDSENSE_REFRESH_WEATHER", True),
             weather_max_days=_env_float("GRIDSENSE_REFRESH_WEATHER_MAX_DAYS", 4.0),
@@ -163,6 +171,7 @@ _lock = threading.Lock()
 
 _status: dict = {
     "last_attempt_at": None,      # ISO, any attempt
+    "last_attempt_seconds": None,  # wall time of the most recent attempt
     "last_success_at": None,      # ISO, only when rows were actually added
     "attempts": 0,
     "rows_added_total": 0,
@@ -197,23 +206,13 @@ def _as_utc(value) -> pd.Timestamp:
 
 def _error_text(exc: BaseException, limit: int) -> str:
     """
-    "ExceptionType: message" for /health, credential stripped, middle elided.
+    The shared config.error_text rule under the name this module's callers use.
 
-    Redaction comes first, never last: slicing can drop the "&" that terminates the
-    token parameter, and then the pattern no longer matches and part of the
-    credential is published anyway.
-
-    Over-cap text loses its middle rather than its tail because a real requests/
-    urllib3 message carries the request URL mid-string and the actual cause
-    ("... (caused by NewConnectionError('Connection refused'))") at the end.
-    Head-truncating it leaves "Max retries exceeded" and throws away the one part
-    that separates a refused connection from a rejected token.
+    One implementation, in config, because the ingestion client formats the inner
+    cause and this module formats what it publishes: two copies of a truncation
+    rule drift, and the drift is what hid "(read timeout=12)" from /health.
     """
-    message = redact_secrets(str(exc))
-    if len(message) > limit:
-        head = (limit - 3) // 2
-        message = message[:head] + "..." + message[-(limit - head - 3):]
-    return f"{type(exc).__name__}: {message}"
+    return error_text(exc, limit)
 
 
 def reset_state() -> None:
@@ -223,6 +222,7 @@ def reset_state() -> None:
     with _lock:
         _status.update({
             "last_attempt_at": None,
+            "last_attempt_seconds": None,
             "last_success_at": None,
             "attempts": 0,
             "rows_added_total": 0,
@@ -239,7 +239,11 @@ def status(current: Optional[pd.DataFrame] = None) -> dict:
             "enabled": config.enabled,
             "stale_after_hours": config.stale_after_hours,
             "cache_seconds": config.cache_seconds,
+            # The ceiling a ReadTimeout reason refers to. Without it the published
+            # failure text has no number to act on.
+            "timeout_seconds": config.timeout_seconds,
             "last_attempt_at": _status["last_attempt_at"],
+            "last_attempt_seconds": _status["last_attempt_seconds"],
             "last_success_at": _status["last_success_at"],
             "attempts": _status["attempts"],
             "rows_added_total": _status["rows_added_total"],
@@ -425,9 +429,14 @@ def build_candidate(current_zone: pd.DataFrame, new_load: pd.DataFrame,
 
 
 def _refresh_zone(zone: str, zone_frame: pd.DataFrame, end: datetime,
-                  client) -> tuple:
-    """Fetch one zone's missing hours and merge. Returns (candidate_or_None, entry)."""
-    entry: dict = {}
+                  client, entry: dict) -> Optional[pd.DataFrame]:
+    """
+    Fetch one zone's missing hours and merge, recording into the caller's entry.
+
+    The entry is passed in rather than returned because the fetch raises: a zone
+    that timed out is precisely the zone whose duration matters, and a dict built
+    inside this function would be discarded with the exception.
+    """
     newest = _as_utc(zone_frame["timestamp"].max())
     end = _as_utc(end)
     start = _as_utc(newest + pd.Timedelta(hours=1))
@@ -437,12 +446,18 @@ def _refresh_zone(zone: str, zone_frame: pd.DataFrame, end: datetime,
     entry["requested_to"] = end.isoformat()
     if start >= end:
         entry["outcome"] = "nothing_to_fetch"
-        return None, entry
+        return None
 
     from ingestion.entsoe_client import pull_load
 
-    new_load = pull_load(ENTSOE_ZONES[zone], zone, start, end,
-                         client=client, backfill=False, verbose=False)
+    # The number a timeout ceiling has to be sized against. Without it, raising
+    # this limit is a guess and the next failure is a guess too.
+    started_at = time.monotonic()
+    try:
+        new_load = pull_load(ENTSOE_ZONES[zone], zone, start, end,
+                             client=client, backfill=False, verbose=False)
+    finally:
+        entry["load_seconds"] = round(time.monotonic() - started_at, 3)
     weather = pd.DataFrame()
     if config.weather_enabled and len(new_load):
         try:
@@ -456,10 +471,10 @@ def _refresh_zone(zone: str, zone_frame: pd.DataFrame, end: datetime,
         zone_frame, new_load, weather if len(weather) else None)
     entry["outcome"] = reason
     if reason != "merged":
-        return None, entry
+        return None
     entry["rows_added"] = int(len(candidate) - len(zone_frame))
     entry["newest"] = _iso(candidate["timestamp"].max())
-    return candidate, entry
+    return candidate
 
 
 def _replace_zones(current: pd.DataFrame, updated: list) -> pd.DataFrame:
@@ -479,6 +494,7 @@ def run_refresh(current: pd.DataFrame, publish: Callable[[pd.DataFrame], None],
     """
     now = now or _now()
     outcomes: dict = {}
+    started_at = time.monotonic()
     try:
         from ingestion.entsoe_client import get_client
 
@@ -492,7 +508,7 @@ def run_refresh(current: pd.DataFrame, publish: Callable[[pd.DataFrame], None],
         updated = []
 
         for zone in _zones_due(current, now):
-            entry: dict
+            entry: dict = {}
             try:
                 if _now() - now > budget:
                     outcomes[zone] = {"outcome": "deadline",
@@ -502,7 +518,7 @@ def run_refresh(current: pd.DataFrame, publish: Callable[[pd.DataFrame], None],
                 if zone not in frames:
                     outcomes[zone] = {"outcome": "zone_absent"}
                     continue
-                candidate, entry = _refresh_zone(zone, frames[zone], end, client)
+                candidate = _refresh_zone(zone, frames[zone], end, client, entry)
                 if candidate is not None:
                     updated.append(candidate)
                     entry["retry_after"] = (now + timedelta(
@@ -511,13 +527,16 @@ def run_refresh(current: pd.DataFrame, publish: Callable[[pd.DataFrame], None],
                     entry["retry_after"] = (now + timedelta(
                         seconds=config.quiet_after_no_gain_seconds)).isoformat()
             except Exception as e:
-                entry = {"outcome": "failed",
-                         "last_error": _error_text(e, 300)}
+                # update, not replace: entry already carries requested_from/to and
+                # load_seconds, which are the evidence for the next ceiling choice.
+                entry.update({"outcome": "failed",
+                              "last_error": _error_text(e, 300)})
                 entry["retry_after"] = (now + timedelta(
                     seconds=config.quiet_after_no_gain_seconds)).isoformat()
                 log.warning("live refresh failed for zone %s: %s", zone, entry["last_error"])
             outcomes[zone] = entry
 
+        attempt_seconds = round(time.monotonic() - started_at, 3)
         done_at = _now()
         added = 0
         if updated:
@@ -526,6 +545,7 @@ def run_refresh(current: pd.DataFrame, publish: Callable[[pd.DataFrame], None],
 
         with _lock:
             _status["last_attempt_at"] = done_at.isoformat()
+            _status["last_attempt_seconds"] = attempt_seconds
             _status["in_flight"] = False
             _status["rows_added_total"] += added
             for zone, entry in outcomes.items():
@@ -533,14 +553,15 @@ def run_refresh(current: pd.DataFrame, publish: Callable[[pd.DataFrame], None],
             if added:
                 _status["last_success_at"] = done_at.isoformat()
                 _status["last_error"] = None
-        log.info("live refresh: %d zone(s) updated, %d row(s) added",
-                 len(updated), added)
+        log.info("live refresh: %d zone(s) updated, %d row(s) added in %.1fs",
+                 len(updated), added, attempt_seconds)
         return outcomes
     except Exception as e:
         message = _error_text(e, 200)
         with _lock:
             _status["in_flight"] = False
             _status["last_attempt_at"] = _now().isoformat()
+            _status["last_attempt_seconds"] = round(time.monotonic() - started_at, 3)
             _status["last_error"] = message
         log.warning("live refresh aborted, serving the committed frame: %s", message)
         return {"_fatal": {"outcome": "failed", "last_error": message}}

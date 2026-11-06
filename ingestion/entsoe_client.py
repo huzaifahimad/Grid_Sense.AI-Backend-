@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 import pandas as pd
-from config import ENTSOE_API_KEY, ENTSOE_ZONES, DATA_RAW_DIR, redact_secrets
+from config import ENTSOE_API_KEY, ENTSOE_ZONES, DATA_RAW_DIR, error_text, redact_secrets
 
 try:
     from entsoe import EntsoePandasClient
@@ -100,8 +100,12 @@ def pull_load(zone_code: str, country_code: str, start: pd.Timestamp, end: pd.Ti
         try:
             result = client.query_load(zone_code, start=chunk_start, end=chunk_end)
         except Exception as e:
-            failed.append((chunk_start.strftime("%Y-%m"),
-                           f"{type(e).__name__}: {redact_secrets(str(e))[:80]}"))
+            # error_text, not str(e)[:80]: the tail of a requests/urllib3 message is
+            # the diagnosis ("(read timeout=12)", "Connection refused"), and a head
+            # slice published by /health throws exactly that away. Measured on the
+            # deployed process 2026-11-06T11:42Z, where all three zones failed with
+            # a reason that could not be read.
+            failed.append((chunk_start.strftime("%Y-%m"), error_text(e, 200)))
             result = None
         if result is not None and len(result):
             series = result.iloc[:, 0] if hasattr(result, "columns") else result

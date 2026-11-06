@@ -36,6 +36,29 @@ def redact_secrets(text: str) -> str:
     """Strip credential-shaped query parameters from arbitrary message text."""
     return _CREDENTIAL_IN_URL.sub(r"\1=[REDACTED]", str(text))
 
+
+def error_text(value, limit: int) -> str:
+    """
+    "ExceptionType: message" for a log line or /health, credential stripped.
+
+    Redaction comes first, never last: slicing can drop the "&" that terminates the
+    token parameter, and then the pattern no longer matches and part of the
+    credential is published anyway.
+
+    Over-cap text loses its middle rather than its tail because a real requests/
+    urllib3 message carries the request URL mid-string and the actual cause at the
+    end — "... (read timeout=12)", "(caused by NewConnectionError('Connection
+    refused'))". Head-truncating it keeps the URL and throws away the one part that
+    says what to fix. This is the shared rule: ingestion and the API both format
+    failure text here so neither can publish a quietly mangled reason.
+    """
+    message = redact_secrets(str(value))
+    if len(message) > limit:
+        head = (limit - 3) // 2
+        message = message[:head] + "..." + message[-(limit - head - 3):]
+    return f"{type(value).__name__}: {message}"
+
+
 # NASA POWER needs no key — public API
 NASA_POWER_BASE_URL = "https://power.larc.nasa.gov/api/temporal/hourly/point"
 
