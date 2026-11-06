@@ -1,7 +1,7 @@
 {
   "method": "closed-loop replay of the held-out test window through the serving path: recursive LightGBM forecast + split-conformal band + risk classifier + decision_rules alarm/shed thresholds, scored against realized load",
-  "generated_at": "2026-11-05T15:17:40.712327+00:00",
-  "runtime_seconds": 18.9,
+  "generated_at": "2026-11-05T19:12:37.825431+00:00",
+  "runtime_seconds": 15.3,
   "window": {
     "test_start": "2026-06-13T10:00:00+00:00",
     "test_end": "2026-11-04T17:00:00+00:00",
@@ -24,9 +24,9 @@
     "overload_definition": "load_mw > 0.9 * capacity_mw (capacity is a per-zone p99-of-load proxy, not rated capacity)"
   },
   "artifacts": {
-    "forecast_model": "C:\\Users\\HP\\OneDrive\\Documents\\grid sense ai for hackathon\\gridsense-backend\\data\\models\\lightgbm_load_forecast.joblib",
-    "risk_model": "C:\\Users\\HP\\OneDrive\\Documents\\grid sense ai for hackathon\\gridsense-backend\\data\\models\\risk_classifier.joblib",
-    "intervals": "C:\\Users\\HP\\OneDrive\\Documents\\grid sense ai for hackathon\\gridsense-backend\\data\\models\\forecast_intervals.json",
+    "forecast_model": "data/models/lightgbm_load_forecast.joblib",
+    "risk_model": "data/models/risk_classifier.joblib",
+    "intervals": "data/models/forecast_intervals.json",
     "models_overridden_for_this_run": false
   },
   "limitations": [
@@ -35,7 +35,7 @@
     "The live /risk endpoint scores one historical snapshot matched to the current weekday+hour; this replay scores every hour in sequence, so it measures the model, not the snapshot-selection rule.",
     "Labels derive from the same load series the models consume, so a sensor outage or curtailment that suppressed measured load would read as 'no overload'.",
     "Overload onsets cluster at each zone's daily peak hour, so a long 'lead time' can come from reproducing the climatological peak shape rather than new information. Read it with the h+6 warning-rule precision gate, which scores the rule over all origins \u2014 including the hours where it cries wolf.",
-    "The newest hour this replay can score is 22 h behind wall clock. Load arrives from ENTSO-E as it is republished, and NASA POWER only exposes an hour roughly two days after it happens; a row missing any weather input is dropped rather than fed to the model with NaNs, because LightGBM silently predicts through missing features. So the served origin is the last *fully observed* hour, not the current one. A near-real-time provider was measured as a substitute and rejected for now: it tracks NASA on temperature (r=0.92, bias +0.4 degC) but not on wind (1.8 vs 2.9 m/s, r=0.62), and splicing it into the tail would score the forecast against a feature distribution the model was never trained on."
+    "The newest hour this replay can score is 26 h behind wall clock. Load arrives from ENTSO-E as it is republished, and NASA POWER only exposes an hour roughly two days after it happens; a row missing any weather input is dropped rather than fed to the model with NaNs, because LightGBM silently predicts through missing features. So the served origin is the last *fully observed* hour, not the current one. A near-real-time provider was measured as a substitute and rejected for now: it tracks NASA on temperature (r=0.92, bias +0.4 degC) but not on wind (1.8 vs 2.9 m/s, r=0.62), and splicing it into the tail would score the forecast against a feature distribution the model was never trained on."
   ],
   "metrics": {
     "forecast": {

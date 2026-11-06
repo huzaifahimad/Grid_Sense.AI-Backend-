@@ -55,7 +55,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from config import DATA_FEATURES_DIR, MODELS_DIR, OVERLOAD_THRESHOLD_RATIO
+from config import BASE_DIR, DATA_FEATURES_DIR, MODELS_DIR, OVERLOAD_THRESHOLD_RATIO
 from models.calibrate_forecast_intervals import build_origins
 from models.decision_rules import ALARM_THRESHOLD, CRITICAL_THRESHOLD, shed_priority
 from models.forecasting import recursive_forecast_batch
@@ -65,6 +65,16 @@ from models.train_baselines import FEATURE_COLS as FORECAST_COLS, train_val_test
 HORIZON = 24
 REPORT_STEPS = [1, 6, 12, 24]
 OUT_PATH = MODELS_DIR / "closed_loop_report.json"
+
+
+def _artifact_ref(name: str) -> str:
+    """Repository-relative reference for a model artifact.
+
+    /validation is a public endpoint; str(MODELS_DIR / name) would publish the
+    absolute path of whoever trained the artifacts locally.
+    """
+    return f"{MODELS_DIR.relative_to(BASE_DIR).as_posix()}/{name}"
+
 
 # direction "high": value >= target -> PASS, >= floor -> WARN, else FAIL.
 # "low" flips it; "between" expects value inside [target[0], target[1]].
@@ -534,9 +544,9 @@ def run(stride: int = 1, horizon: int = HORIZON, write: bool = True,
                 "(capacity is a per-zone p99-of-load proxy, not rated capacity)"),
         },
         "artifacts": {
-            "forecast_model": str(MODELS_DIR / "lightgbm_load_forecast.joblib"),
-            "risk_model": str(MODELS_DIR / "risk_classifier.joblib"),
-            "intervals": str(MODELS_DIR / "forecast_intervals.json"),
+            "forecast_model": _artifact_ref("lightgbm_load_forecast.joblib"),
+            "risk_model": _artifact_ref("risk_classifier.joblib"),
+            "intervals": _artifact_ref("forecast_intervals.json"),
             "models_overridden_for_this_run": bool(models),
         },
         "limitations": [
