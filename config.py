@@ -87,10 +87,37 @@ ZONE_COORDINATES = {
 # Paths — matches the System Architecture doc's OSS layout conceptually,
 # using local disk for the prototype (swap for OSS SDK calls later)
 BASE_DIR = Path(__file__).parent
-DATA_RAW_DIR = BASE_DIR / "data" / "raw"
-DATA_FEATURES_DIR = BASE_DIR / "data" / "features"
-MODELS_DIR = BASE_DIR / "data" / "models"
 
+
+def _dir_from_env(var: str, default: Path) -> Path:
+    """
+    Redirectable data directory.
+
+    A retrain must be able to write its candidates somewhere other than the
+    committed artifacts the live API serves, so every writer below resolves its
+    output through this hook instead of hardcoding BASE_DIR. Unset in the
+    environment means exactly the historical layout, so nothing changes for the
+    deployed service or the test suite.
+    """
+    value = os.environ.get(var)
+    return Path(value).expanduser().resolve() if value else default
+
+
+DATA_RAW_DIR = _dir_from_env("GRIDSENSE_DATA_RAW_DIR", BASE_DIR / "data" / "raw")
+# Written by features/build_features.py; overridden by scripts/run_retrain_chain.sh
+# --out-dir so a candidate feature table never lands on the served one.
+DATA_FEATURES_DIR = _dir_from_env("GRIDSENSE_FEATURES_DIR", BASE_DIR / "data" / "features")
+# The served artifact set (api/main.py loads it at startup). Training stages read
+# this as INPUT and write GRIDSENSE_MODELS_OUT_DIR instead; only
+# scripts/promote_models.py writes here, deliberately and from a gated candidate.
+MODELS_DIR = _dir_from_env("GRIDSENSE_MODELS_DIR", BASE_DIR / "data" / "models")
+# Where a retrain writes its models. Defaults to MODELS_DIR so the standalone
+# trainers behave as they always did; the chain sets it to the dated candidate dir.
+MODELS_OUT_DIR = _dir_from_env("GRIDSENSE_MODELS_OUT_DIR", MODELS_DIR)
+
+# Only the data dirs the API and tests read are created eagerly; MODELS_OUT_DIR is
+# created by whoever writes to it (scripts/run_retrain_chain.sh does it up front), so
+# importing config never litters the repo with an empty candidate directory.
 for d in (DATA_RAW_DIR, DATA_FEATURES_DIR, MODELS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 

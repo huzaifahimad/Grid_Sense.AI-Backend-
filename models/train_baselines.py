@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import joblib
 from sklearn.metrics import mean_absolute_percentage_error, mean_absolute_error, mean_squared_error
-from config import DATA_FEATURES_DIR, MODELS_DIR
+from config import DATA_FEATURES_DIR, MODELS_OUT_DIR
 
 try:
     import lightgbm as lgb
@@ -119,7 +119,7 @@ def lightgbm_baseline(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame
     preds = model.predict(test_valid[FEATURE_COLS])
     result = evaluate(test_valid[TARGET_COL], preds, "LightGBM")
 
-    model_path = MODELS_DIR / "lightgbm_load_forecast.joblib"
+    model_path = MODELS_OUT_DIR / "lightgbm_load_forecast.joblib"
     joblib.dump(model, model_path)
     print(f"[baselines] saved LightGBM model -> {model_path}")
 
@@ -155,7 +155,7 @@ def lightgbm_no_weather_fallback(train: pd.DataFrame, val: pd.DataFrame, test: p
     result = evaluate(test_valid[TARGET_COL], preds, "LightGBM no-weather")
     result["feature_set"] = "no_weather"
 
-    path = MODELS_DIR / "lightgbm_load_forecast_no_weather.joblib"
+    path = MODELS_OUT_DIR / "lightgbm_load_forecast_no_weather.joblib"
     joblib.dump(model, path)
     print(f"[baselines] saved fallback model -> {path}")
     return result
@@ -178,7 +178,7 @@ def run_all():
     ]
 
     results_df = pd.DataFrame(results)
-    results_path = MODELS_DIR / "baseline_results.csv"
+    results_path = MODELS_OUT_DIR / "baseline_results.csv"
     results_df.to_csv(results_path, index=False)
     print(f"\n[baselines] results saved -> {results_path}")
     gap = next(r for r in results if r["label"] == "LightGBM")["mape"] - \

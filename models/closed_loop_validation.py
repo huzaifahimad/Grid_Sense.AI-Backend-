@@ -55,7 +55,8 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from config import BASE_DIR, DATA_FEATURES_DIR, MODELS_DIR, OVERLOAD_THRESHOLD_RATIO
+from config import (BASE_DIR, DATA_FEATURES_DIR, MODELS_DIR, MODELS_OUT_DIR,
+                    OVERLOAD_THRESHOLD_RATIO)
 from models.calibrate_forecast_intervals import build_origins
 from models.decision_rules import ALARM_THRESHOLD, CRITICAL_THRESHOLD, shed_priority
 from models.forecasting import recursive_forecast_batch
@@ -67,13 +68,16 @@ REPORT_STEPS = [1, 6, 12, 24]
 OUT_PATH = MODELS_DIR / "closed_loop_report.json"
 
 
-def _artifact_ref(name: str) -> str:
+def _artifact_ref(name: str, models_dir: Path = MODELS_DIR) -> str:
     """Repository-relative reference for a model artifact.
 
-    /validation is a public endpoint; str(MODELS_DIR / name) would publish the
+    /validation is a public endpoint; str(models_dir / name) would publish the
     absolute path of whoever trained the artifacts locally.
     """
-    return f"{MODELS_DIR.relative_to(BASE_DIR).as_posix()}/{name}"
+    try:
+        return f"{Path(models_dir).relative_to(BASE_DIR).as_posix()}/{name}"
+    except ValueError:  # a candidate dir outside the repo has no relative form
+        return f"{Path(models_dir).name}/{name}"
 
 
 # direction "high": value >= target -> PASS, >= floor -> WARN, else FAIL.
@@ -489,18 +493,25 @@ def hourly_gaps(df: pd.DataFrame) -> dict:
 
 
 def run(stride: int = 1, horizon: int = HORIZON, write: bool = True,
-        models: dict | None = None) -> dict:
+        models: dict | None = None, models_dir: Path | None = None) -> dict:
+    """Replay the held-out test window through the serving path.
+
+    models_dir selects which artifact set is certified. None means the served
+    MODELS_DIR, which is what CI and /validation describe; a retrain passes its
+    candidate directory so nothing here ever reads or writes data/models.
+    """
     t0 = time.time()
+    models_dir = Path(models_dir) if models_dir else MODELS_DIR
     df = pd.read_parquet(DATA_FEATURES_DIR / "training_features.parquet")
     _, _, test = train_val_test_split(df)
     start, end = test["timestamp"].min(), test["timestamp"].max()
 
     loaded = models or {}
     forecast_model = loaded.get("forecast_model") or joblib.load(
-        MODELS_DIR / "lightgbm_load_forecast.joblib")
-    risk_model = loaded.get("risk_model") or joblib.load(MODELS_DIR / "risk_classifier.joblib")
+        models_dir / "lightgbm_load_forecast.joblib")
+    risk_model = loaded.get("risk_model") or joblib.load(models_dir / "risk_classifier.joblib")
     intervals = loaded.get("intervals") or json.loads(
-        (MODELS_DIR / "forecast_intervals.json").read_text())
+        (models_dir / "forecast_intervals.json").read_text())
 
     rows = df[(df["timestamp"] >= start) & (df["timestamp"] <= end)]
     rows = rows.dropna(subset=RISK_COLS + [TARGET_COL])
@@ -544,9 +555,9 @@ def run(stride: int = 1, horizon: int = HORIZON, write: bool = True,
                 "(capacity is a per-zone p99-of-load proxy, not rated capacity)"),
         },
         "artifacts": {
-            "forecast_model": _artifact_ref("lightgbm_load_forecast.joblib"),
-            "risk_model": _artifact_ref("risk_classifier.joblib"),
-            "intervals": _artifact_ref("forecast_intervals.json"),
+            "forecast_model": _artifact_ref("lightgbm_load_forecast.joblib", models_dir),
+            "risk_model": _artifact_ref("risk_classifier.joblib", models_dir),
+            "intervals": _artifact_ref("forecast_intervals.json", models_dir),
             "models_overridden_for_this_run": bool(models),
         },
         "limitations": [
@@ -654,11 +665,21 @@ def main(argv=None) -> int:
     parser.add_argument("--stride", type=int, default=1, help="hours between forecast origins")
     parser.add_argument("--horizon", type=int, default=HORIZON)
     parser.add_argument("--out", type=str, default=str(OUT_PATH))
+    parser.add_argument("--models-dir", type=Path, default=None,
+                        help="artifact set to certify. Default: the retrain output dir "
+                             "(config.MODELS_OUT_DIR) if it holds models, else the served "
+                             "data/models. Never reads or writes anything outside it.")
     parser.add_argument("--strict", action="store_true", help="treat WARN as failure")
     args = parser.parse_args(argv)
 
+    models_dir = args.models_dir
+    if models_dir is None:
+        candidate = MODELS_OUT_DIR / "lightgbm_load_forecast.joblib"
+        models_dir = MODELS_OUT_DIR if candidate.exists() else MODELS_DIR
+    print(f"[closed_loop] certifying artifacts in {models_dir}")
+
     OUT_PATH = Path(args.out)
-    report = run(stride=args.stride, horizon=args.horizon)
+    report = run(stride=args.stride, horizon=args.horizon, models_dir=models_dir)
     if report["overall"] == "FAIL" or (args.strict and report["overall"] == "WARN"):
         return 1
     return 0

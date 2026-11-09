@@ -34,7 +34,12 @@ frame is 51,959 hourly rows whose every load row is stamped `entsoe` and whose w
 is stamped `nasa_power` (270 rows unavailable). What genuinely remains unproven is
 narrower but real: the overload label is a per-zone p99 proxy rather than a verified
 thermal capacity, the zones are Spanish, Greek and Italian rather than Pakistani, and
-NASA POWER reanalysis runs roughly two days behind real time. See
+NASA POWER reanalysis publishes its newest hour roughly two days behind wall clock; the
+load-vs-weather gap this leaves in the committed feature frame measures **90 h**
+(max load timestamp minus max weather timestamp, same for all three zones), while the
+live served frame moves both ways — **134.0 h** at 2026-11-06T15:29Z as the refresher
+appended load-only hours, then **55.0 h** at 2026-11-07T07:52Z once NASA POWER backfilled
+(`GET /health → weather_lag_hours`, quoted point-in-time). See
 `docs/04_Pipeline_Documentation.md` for the exact breakdown of what's real and what is
 still a proxy.
 

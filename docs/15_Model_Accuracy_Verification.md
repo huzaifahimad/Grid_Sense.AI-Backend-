@@ -239,7 +239,7 @@ honest placement for it. `random_state=42` is pinned throughout and the rerun in
 | Item | Status |
 |---|---|
 | Real rated MW capacity per zone | **not sourced**; it is the proxy behind every figure in §2, and replacing it would change the label itself |
-| Data refresh path for the served frame | not designed; the frame ends 2026-11-04 17:00 UTC and the served risk snapshot ages with weather-feed lag |
+| Data refresh path for the served frame | designed and shipped since this run: `api/live_refresh.py` extends the served frame at request time, and a successful pull is now on record (measured 2026-11-06T14:36Z: `rows_added_total` 132, newest served hour `2026-11-06T13:00Z`). At the measurement window above the committed parquet ended 2026-11-04 17:00 UTC with no refresh path — that file is still what it is (`data/features/training_features.parquet`, 51,959 rows, newest hour 2026-11-04 17:00 UTC); it is the served copy in memory that request-time refresh extends. Either way this document's figures rest on the committed frame and the closed-loop replay generated from it, which request-time refresh does not touch. |
 | IT_SOUTH recall 0.4556 | accepted limitation; per-zone models or recalibration is unstarted work |
 | Extreme-overload blindness above the trained range | accepted limitation, §2 |
 | Pickle artifacts execute code on load | accepted; a non-code artifact format is not started |

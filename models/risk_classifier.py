@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 import joblib
 from sklearn.metrics import average_precision_score, brier_score_loss, precision_recall_curve
-from config import DATA_FEATURES_DIR, MODELS_DIR
+from config import DATA_FEATURES_DIR, MODELS_OUT_DIR
 
 try:
     import lightgbm as lgb
@@ -56,6 +56,17 @@ FEATURE_COLS = [
     "is_weekend",
 ]
 TARGET_COL = "overload_risk_label"
+
+# Same reasoning that produced lightgbm_load_forecast_no_weather.joblib, applied to the
+# alarm half of the product. NASA POWER reanalysis publishes an hour days after it
+# happens while ENTSO-E publishes load far sooner, so every served frame carries a tail
+# of load-only hours. This classifier's dropna(subset=FEATURE_COLS) deletes exactly that
+# tail, which pins /risk to the last weather-published hour forever (measured: 90h on the
+# committed parquet, 162h on a simulated refreshed frame). The reduced set below uses
+# only features live_refresh fills from load alone plus the calendar, so a second
+# artifact can score the blind tail. Trained by scripts/train_risk_no_weather.py.
+WEATHER_FEATURE_COLS = ["temperature_c", "humidity_pct", "wind_speed_ms"]
+FEATURE_COLS_NO_WEATHER = [c for c in FEATURE_COLS if c not in WEATHER_FEATURE_COLS]
 
 # Risk buckets for precomputed explanation lookup — coarse but Vercel-cheap
 RISK_BUCKETS = [
@@ -131,6 +142,70 @@ def precompute_bucketed_shap(model, test_valid: pd.DataFrame, probs: np.ndarray)
     return bucketed
 
 
+# Serving gains below this are not worth trading weather-aware accuracy for, and the
+# number is deliberately shared with /forecast's FALLBACK_MIN_GAIN_HOURS so the two
+# panels cannot disagree about when "newest" means "weather-blind".
+DEFAULT_FALLBACK_MIN_GAIN_HOURS = 6.0
+
+
+def scorable_mask(zone_df: pd.DataFrame, feature_cols: list[str]) -> pd.Series:
+    """
+    Hours a model with exactly this feature set can be given as input.
+
+    Missing columns count as missing values, not as an error: the point of this
+    predicate is "can this row be scored", and a load-only frame without weather
+    columns at all answers the same way a weather-NaN row does.
+    """
+    present = [c for c in feature_cols if c in zone_df.columns]
+    if len(present) != len(feature_cols):
+        return pd.Series(False, index=zone_df.index)
+    return zone_df[present].notna().all(axis=1)
+
+
+def weather_frontier(zone_df: pd.DataFrame) -> pd.Timestamp | None:
+    """Newest hour whose weather features are all present, or None if there is none."""
+    complete = zone_df.loc[scorable_mask(zone_df, FEATURE_COLS), "timestamp"]
+    return complete.max() if len(complete) else None
+
+
+def blind_tail_hours(zone_df: pd.DataFrame) -> float:
+    """
+    Hours between the newest row in the frame and the newest row the weather-aware
+    classifier can still score. This is the staleness /risk carries on every request;
+    it grows one hour per hour of uptime because NASA POWER never catches up to load.
+    """
+    frontier = weather_frontier(zone_df)
+    if frontier is None or not len(zone_df):
+        return 0.0
+    return max(0.0, (zone_df["timestamp"].max() - frontier).total_seconds() / 3600.0)
+
+
+def choose_risk_model(zone_df: pd.DataFrame, *, has_fallback: bool,
+                      min_gain_hours: float = DEFAULT_FALLBACK_MIN_GAIN_HOURS,
+                      ) -> tuple[str, str]:
+    """
+    Which risk artifact answers for this zone, and why, in one word the API can publish.
+
+    Mirrors /forecast's gating rather than inventing a second policy: the reduced model
+    is served only when its own scorable frontier is meaningfully newer than the
+    incumbent's, and never when the artifact is absent — an unshipped fallback must
+    leave the old behaviour intact, staleness and all.
+    """
+    if not has_fallback:
+        return "weather_aware", "no weather-blind risk artifact loaded"
+    incumbent = weather_frontier(zone_df)
+    tail = zone_df.loc[scorable_mask(zone_df, FEATURE_COLS_NO_WEATHER), "timestamp"]
+    if tail.empty:
+        return "weather_aware", "no row either model can score"
+    fallback = tail.max()
+    if incumbent is None:
+        return "no_weather_fallback", "incumbent has no scorable hour at all"
+    gain_h = (fallback - incumbent).total_seconds() / 3600.0
+    if gain_h >= min_gain_hours:
+        return "no_weather_fallback", f"incumbent frontier {incumbent.isoformat()} is {gain_h:.1f}h behind"
+    return "weather_aware", f"blind tail only {gain_h:.1f}h < {min_gain_hours:.0f}h minimum gain"
+
+
 def train_and_evaluate():
     feat_path = DATA_FEATURES_DIR / "training_features.parquet"
     if not feat_path.exists():
@@ -188,14 +263,14 @@ def train_and_evaluate():
     print(f"[risk_classifier] at precision~{precision[idx]:.2f}, recall={recall[idx]:.2f}, "
           f"threshold={thresholds[idx]:.3f}  <- tune this operating point with the actual utility, not arbitrarily")
 
-    model_path = MODELS_DIR / "risk_classifier.joblib"
+    model_path = MODELS_OUT_DIR / "risk_classifier.joblib"
     joblib.dump(model, model_path)
     print(f"[risk_classifier] saved model -> {model_path}")
 
     # SHAP runs ONCE here, output saved as plain JSON — the live API reads this
     # JSON file, it never imports shap/numba/llvmlite at request time
     bucketed_factors = precompute_bucketed_shap(model, test_valid, probs)
-    factors_path = MODELS_DIR / "risk_factors_by_bucket.json"
+    factors_path = MODELS_OUT_DIR / "risk_factors_by_bucket.json"
     with open(factors_path, "w") as f:
         json.dump(bucketed_factors, f, indent=2)
     print(f"[risk_classifier] saved precomputed factors -> {factors_path}")

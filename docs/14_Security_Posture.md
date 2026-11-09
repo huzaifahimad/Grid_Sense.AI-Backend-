@@ -311,10 +311,19 @@ re-includes) and running the API out of that stripped directory.
   code defect, and not something a repo change can fix: it is the `ENTSOE_API_KEY` held in FastAPI
   Cloud's secret store being **rejected by ENTSO-E**. The identical request path returned two years
   of real load on 2026-11-03 through a token that was accepted, so the pipeline is capable and the
-  deployed credential is not. The app degrades exactly as designed meanwhile: `rows_added_total`
-  stays 0, `last_success_at` stays null, `/forecast/ES` `origin_timestamp` stays
-  `2026-11-04T17:00:00+00:00`, and `serving_newest` plus `origin_age_hours` report that age
-  honestly rather than presenting the frame as current.
+  deployed credential is not. That was the live state as of the timestamp in this section's heading;
+  it was resolved later the same day — see the resolution bullet below. The app degraded exactly as
+  designed throughout that window:
+  `rows_added_total` stayed 0, `last_success_at` stayed null, `/forecast/ES` `origin_timestamp`
+  stayed `2026-11-04T17:00:00+00:00`, and `serving_newest` plus `origin_age_hours` reported that
+  age honestly rather than presenting the frame as current.
+- **Resolved later the same day, and the refresh then did produce rows.** A replacement
+  credential went into FastAPI Cloud's secret store after the measurements above. Measured live
+  at 2026-11-06T14:36Z: `data_refresh.last_success_at` = `2026-11-06T14:17:40Z`,
+  `rows_added_total` = **132**, all three zones `outcome: merged` (44 rows each), and per-zone
+  `serving_newest` = `2026-11-06T13:00:00+00:00`. All three `/forecast/*` endpoints returned
+  `origin_timestamp` `2026-11-06T13:00:00+00:00` with `origin_age_hours` **1.61**, and
+  `data_refresh.last_error` is `null`. What had been blocking §9 is closed.
 - **Redaction held under production traffic.** The published 401 reason ends
   `...&securityToken=[REDACTED]&periodStart=202611041800&periodEnd=202611061200` — credential gone,
   and the middle-elision is what preserves both ends: the requested period stays readable inside a
@@ -329,13 +338,10 @@ re-includes) and running the API out of that stripped directory.
 3. **Rated MW capacity** from an operator source (NTDC for the current ENTSO-E stand-in zones), so
    `capacity_mw` stops being a p99 proxy.
 4. **App-level rate limiting** before the endpoint faces untrusted traffic at volume.
-5. **Fix the deployed credential, then observe one row-producing refresh.** Egress, timeout sizing
-   and error hygiene are all now proven on the deployed bundle (§9); the last thing standing between
-   the live API and current data is that its stored `ENTSOE_API_KEY` is answered with **401
-   Unauthorized**. Either replace that secret in FastAPI Cloud's dashboard with a token whose
-   "Restful API access" request ENTSO-E has approved, or set `GRIDSENSE_REFRESH=false` and stop
-   spending a 30-second attempt per cache window on a credential that cannot succeed. The check that
-   closes it is `/health.data_refresh.last_success_at` and `rows_added_total` moving on the live
-   host, then `/forecast/ES` `origin_timestamp` advancing past `2026-11-04T17:00Z`. Local
-   pinned-env coverage is no longer the gap — §8 records the suite and the verifier both green on
-   the deployed pins.
+5. **Deployed credential — closed 2026-11-06.** The condition described above (stored
+   `ENTSOE_API_KEY` answered with **401 Unauthorized**, one 30-second attempt per cache window
+   spent on a credential that could not succeed) no longer holds: the secret was replaced and the
+   check that closes it moved on the live host — `/health.data_refresh.last_success_at` and
+   `rows_added_total`, plus `/forecast/ES` `origin_timestamp` advancing past `2026-11-04T17:00Z`.
+   §9 records the measurement. If `last_error` ever returns to a 401, set
+   `GRIDSENSE_REFRESH=false` rather than spending an attempt that cannot succeed.

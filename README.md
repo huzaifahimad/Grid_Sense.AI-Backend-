@@ -27,8 +27,11 @@ leak-free time-series features, and serves three trained models through a REST A
   persistence (same hour, previous day) until an NWP feed is connected.
 - **No-weather fallback forecaster** (LightGBM regressor, 13 features) — the same recursion
   without the three weather inputs, with its own separately calibrated bands. NASA POWER
-  publishes an hour roughly two days late, so the freshest ENTSO-E load hours have no
-  weather row; the weather-aware model is not fed invented inputs, and the API answers those
+  publishes an hour roughly two days behind wall clock, so the freshest ENTSO-E load hours
+  have no weather row — a **90 h** blind tail in the committed frame, and a moving one on
+  the live served frame (`/health → weather_lag_hours`, a sawtooth rather than a constant:
+  **134.0 h** at 2026-11-06T15:29Z, **55.0 h** at 2026-11-07T07:52Z after the feed
+  backfilled). The weather-aware model is not fed invented inputs, and the API answers those
   origins from this model instead and says which one it used in `served_by`. Test MAPE
   **2.12%**, within 0.02 pp of the weather-aware model.
 - **Overload Risk Classifier** (LightGBM classifier) — per-zone risk score with
@@ -53,10 +56,23 @@ retraining and a fresh validation run.
 > not an NWP feed. `GET /health → data_provenance` therefore reports one horizon per feed
 > (`load_latest_timestamp`, `weather_latest_timestamp`, `weather_lag_hours`, `capacity`)
 > rather than a single "last updated" — reanalysis reaches its newest hour roughly four
-> days after load does, and at the time of writing it was 90 h behind, which is what pushes
-> `/forecast` onto the no-weather fallback and `/risk` onto the newest hour every input
-> covers. The closed-loop release gates currently grade **WARN**, 9 of 13 passing
-> and 4 short (band coverage drift, event detection, 3 h warning share, median stable lead).
+> days after load does, and that gap is what pushes `/forecast` onto the no-weather
+> fallback and `/risk` onto the newest hour every input covers. The size of the gap
+> depends on which object you measure: the committed frame
+> (`data/features/training_features.parquet`) freezes it at **90 h** for all three zones
+> (max load timestamp 2026-11-04T17:00Z minus max weather timestamp 2026-10-31T23:00Z),
+> while the live served frame moves in both directions. It widens as the request-time
+> refresher appends load-only hours, then collapses when NASA POWER backfills older hours:
+> `GET /health → data_provenance.weather_lag_hours` reported **134.0 h** at the
+> 2026-11-06T14:36Z probe, still **134.0 h** at the 15:29Z re-probe (`load_latest`
+> 2026-11-06T13:00Z against `weather_latest` 2026-10-31T23:00Z), and **55.0 h** at
+> 2026-11-07T07:52Z once `weather_latest_timestamp` reached 2026-11-04T23:00Z while
+> `load_latest_timestamp` stood at 2026-11-07T06:00Z. So the live figure is a point-in-time
+> `/health` reading and is sometimes below the committed frame's 90 h, never a property of
+> that file and never a constant to reason from.
+> The closed-loop release gates currently grade
+> **WARN**, 9 of 13 passing and 4 short (band coverage drift, event detection, 3 h warning
+> share, median stable lead).
 > See [`docs/04_Pipeline_Documentation.md`](docs/04_Pipeline_Documentation.md) and
 > `GET /validation` before citing any accuracy number.
 
@@ -254,7 +270,7 @@ inferring it from the env.
 | `GRIDSENSE_REFRESH_TIMEOUT_SECONDS` | `30.0` | Per-request socket timeout for the refresh path. It cannot inherit entsoe-py's defaults: 3 retries × 10 s would hold a thread ~2 min for nothing, since the fallback is the committed frame. The refresher makes **one** attempt with **zero** delay between attempts. 12 s was measured to be **below the endpoint's own response floor** — two direct probes of `web-api.tp.entsoe.eu` (2026-11-06T11:56:44Z, invalid token, so the server short-circuits before building the document) returned first byte at **15.1 s** and **5.4 s** — and every zone in the deployed process consequently died with `ReadTimeout` on ~42 h requests. 30 s leaves roughly 2× the worst observed TTFB. `/health` now publishes `timeout_seconds`, `last_attempt_seconds` and per-zone `load_seconds`, so the next sizing is read off the wall rather than guessed. |
 | `GRIDSENSE_REFRESH_KEEP_ROWS` | `500` | Rows kept per zone after a merge. Deliberately above the 336 the API loads at startup, so a refresh never drops history another endpoint relies on, while still bounding memory on a long-lived process. Trims the in-memory frame only — committed Parquet is never rewritten. |
 | `GRIDSENSE_REFRESH_WEATHER` | `true` | Whether the refresh also pulls NASA POWER weather. No key required. |
-| `GRIDSENSE_REFRESH_WEATHER_MAX_DAYS` | `4.0` | Calendar days of weather per pull (the window is day-bounded). Reanalysis publishes roughly two days behind, so this usually cannot fill the blind tail — the no-weather fallback model is the shipped answer for that gap; the pull does recover hours that were simply never fetched. |
+| `GRIDSENSE_REFRESH_WEATHER_MAX_DAYS` | `4.0` | Calendar days of weather per pull (the window is day-bounded). NASA POWER publishes its newest hour roughly two days behind wall clock (a feed property, not a repo number), so this usually cannot fill the blind tail — in the committed frame that tail is the **90 h** load-vs-weather gap; on the live served frame it is whatever `/health → weather_lag_hours` reports at that moment (134.0 h at 2026-11-06T15:29Z). The no-weather fallback model is the shipped answer for that gap; the pull does recover hours that were simply never fetched. |
 
 Numeric knobs are validated on read: a non-numeric or non-positive value logs a
 warning and falls back to the default rather than disabling the gate or

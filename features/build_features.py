@@ -9,6 +9,7 @@ Usage:
     python -m features.build_features
 """
 
+import argparse
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -18,10 +19,11 @@ import pandas as pd
 from config import DATA_RAW_DIR, DATA_FEATURES_DIR, OVERLOAD_THRESHOLD_RATIO
 
 
-def load_raw_data(load_source: str = "entsoe") -> pd.DataFrame:
+def load_raw_data(load_source: str = "entsoe", raw_dir: Path | None = None) -> pd.DataFrame:
     """load_source: 'entsoe' or 'kaggle' — whichever ingestion has run."""
-    load_path = DATA_RAW_DIR / f"{load_source}_load.parquet"
-    weather_path = DATA_RAW_DIR / "nasa_power_weather.parquet"
+    raw_dir = Path(raw_dir) if raw_dir else DATA_RAW_DIR
+    load_path = raw_dir / f"{load_source}_load.parquet"
+    weather_path = raw_dir / "nasa_power_weather.parquet"
 
     if not load_path.exists():
         raise FileNotFoundError(
@@ -124,12 +126,42 @@ def add_overload_proxy_label(df: pd.DataFrame, capacity_col: str = None) -> pd.D
     return df
 
 
-def build(load_source: str = "entsoe") -> pd.DataFrame:
-    load_df, weather_df = load_raw_data(load_source)
+def build(load_source: str = "entsoe", raw_dir: Path | None = None,
+          out_path: Path | None = None,
+          extra_load_rows: pd.DataFrame | None = None) -> pd.DataFrame:
+    """
+    raw_dir / out_path default to the live config values, read HERE rather than at
+    import time — a retrain exports GRIDSENSE_* after Python has already imported this
+    module, and a mutable default captured then would quietly write onto the committed
+    feature table instead of the candidate directory.
+    """
+    raw_dir = Path(raw_dir) if raw_dir else DATA_RAW_DIR
+    out_path = (Path(out_path) if out_path
+                else DATA_FEATURES_DIR / "training_features.parquet")
+    load_df, weather_df = load_raw_data(load_source, raw_dir)
+    if extra_load_rows is not None and len(extra_load_rows):
+        # The weekly cadence: the committed history plus this week's pull. The
+        # concat happens before reindex_hourly_grid and the lag shifts, so the new
+        # hours extend each zone's series instead of sitting beside it.
+        extra = extra_load_rows.copy()
+        if "source" not in extra.columns:
+            extra["source"] = load_df["source"].iloc[0]
+        load_df = pd.concat([load_df, extra], ignore_index=True)
+        stamps = pd.to_datetime(extra["timestamp"])
+        print(f"[features] appended {len(extra)} new load row(s), "
+              f"{stamps.min()} -> {stamps.max()}")
 
     # Round weather timestamps to hour to guarantee join alignment
     weather_df["timestamp"] = weather_df["timestamp"].dt.floor("h")
     load_df["timestamp"] = pd.to_datetime(load_df["timestamp"]).dt.floor("h")
+
+    # ENTSO-E republishes hours it already served, so a second weekly pull overlaps
+    # the first by design. Last write wins — the newer value is the corrected one —
+    # because reindex_hourly_grid cannot reindex an axis with duplicate labels.
+    n_dupes = int(load_df.duplicated(subset=["zone", "timestamp"]).sum())
+    if n_dupes:
+        load_df = load_df.drop_duplicates(subset=["zone", "timestamp"], keep="last")
+        print(f"[features] {n_dupes} duplicated load hour(s) resolved to the latest pull")
 
     # Weather is keyed by a coordinate-derived zone label; load is keyed by country/zone code.
     # For the prototype these are aligned 1:1 via config.ZONE_COORDINATES / ENTSOE_ZONES keys.
@@ -180,11 +212,28 @@ def build(load_source: str = "entsoe") -> pd.DataFrame:
     print(f"[features] last weather-complete hour {merged.loc[~blind, 'timestamp'].max()}; "
           f"last observed load hour {merged['timestamp'].max()}")
 
-    out_path = DATA_FEATURES_DIR / "training_features.parquet"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     merged.to_parquet(out_path, index=False)
     print(f"[features] wrote {len(merged)} rows, {merged.shape[1]} columns -> {out_path}")
     return merged
 
 
 if __name__ == "__main__":
-    build(load_source="entsoe")
+    ap = argparse.ArgumentParser(description=(__doc__ or "").strip().splitlines()[0])
+    ap.add_argument("--load-source", default="entsoe", choices=["entsoe", "kaggle"])
+    ap.add_argument("--raw-dir", type=Path, default=DATA_RAW_DIR,
+                    help="where the raw load/weather parquets live")
+    ap.add_argument("--out", type=Path, default=DATA_FEATURES_DIR / "training_features.parquet",
+                    help="feature table to write. Point it at the candidate dir during a "
+                         "retrain; the committed data/features table is never the target.")
+    ap.add_argument("--append-load-parquet", type=Path, default=None,
+                    help="newly pulled load rows (same schema as <raw-dir>/entsoe_load.parquet) "
+                         "appended to the existing history before features are rebuilt — "
+                         "the 'add new data to old data' step of the weekly cadence")
+    args = ap.parse_args()
+
+    extra = None
+    if args.append_load_parquet:
+        extra = pd.read_parquet(args.append_load_parquet)
+    build(load_source=args.load_source, raw_dir=args.raw_dir, out_path=args.out,
+          extra_load_rows=extra)

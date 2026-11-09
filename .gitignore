@@ -32,6 +32,27 @@ _audit_out/
 _synthetic_backup/
 _audit_*.py
 
+# Misnamed image scratch left in docs/ (a real JPEG with a .jpe extension, not
+# referenced by any doc or script). Ignored rather than deleted; rename it to
+# .jpg and commit it if it was ever meant to be an asset.
+docs/*.jpe
+
+# NOTE (not ignored here — outside this repo's git boundary, owner decision):
+#   ../gridsense-frontend/_extract_dist_env.py  — one-off dist-bundle probe;
+#     belongs under the frontend repo's .gitignore (its own _*.py convention),
+#     which this file cannot affect.
+#   ../submission/gs_pptx_dump.txt — slide-text scratch dump; ../submission is
+#     not a git repo at all, so nothing can sweep it into a commit.
+
+# Retrain-chain and weather-blind-risk experiment outputs. Each run writes a
+# full candidate artifact set (~1.7 MB risk model + ~1.4 MB forecaster per
+# directory, several directories per run). Ignore the outputs; keep the
+# top-level harness scripts, which are the reproducible evidence.
+_retrain_scratch/*
+!_retrain_scratch/*.py
+_risknw_scratch/*
+!_risknw_scratch/*.py
+
 # OS
 .DS_Store
 Thumbs.db

@@ -25,8 +25,15 @@ not the same as "validated product":
 
 - The overload label is a proxy. `capacity_mw` is a per-zone p99 of observed load, so
   "overload" means unusually high for that zone, not thermally verified.
-- Weather is a reanalysis product, roughly two days behind real time, which is why the
-  fallback no-weather forecaster exists.
+- Weather is a reanalysis product whose newest hour publishes roughly two days behind
+  wall clock (a property of the NASA POWER feed, not of this repo's frame). Inside the
+  committed feature file the resulting load-vs-weather gap is **90 h** — max load
+  timestamp minus max weather timestamp, identical for all three zones — while on the
+  live served frame it is a sawtooth: it widens as the refresher appends load-only hours
+  (**134.0 h** at 2026-11-06T15:29Z) and collapses when the feed backfills
+  (**55.0 h** at 2026-11-07T07:52Z, below the committed frame's 90 h). Read it from
+  `/health → data_provenance.weather_lag_hours` at the moment you quote it. This gap is
+  why the fallback no-weather forecaster exists.
 - The three zones are European. Nothing here has been run on Pakistani data.
 
 `ingestion/synthetic_bootstrap.py` is no longer part of the path that produced the

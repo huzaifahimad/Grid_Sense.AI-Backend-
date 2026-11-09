@@ -82,6 +82,15 @@ ROWS_PER_ZONE_BUFFER = 336
 # weather-aware model is served instead of trading accuracy for a few spare hours.
 FALLBACK_MIN_GAIN_HOURS = 6
 
+# Past this age the newest complete row is no more informative than a replay of the
+# same UTC weekday+hour, so _representative_snapshot switches to that lookalike. The
+# lookalike survives because ENTSO-E once published load days behind wall clock; a
+# same-weekday/same-hour row matched the seasonality the score depends on, whereas a
+# multi-day-old newest row did not. The cutoff is the refresher's own definition of
+# "this frame needs new data" (live_refresh stale_after_hours), restated here as a
+# local alias so one deployment knob decides both when to fetch and when to replay.
+RISK_SNAPSHOT_LOOKALIKE_AFTER_HOURS = live_refresh.config.stale_after_hours
+
 _state: dict = {
     "forecast_model": None,
     "fallback_model": None,
@@ -262,25 +271,52 @@ def _zone_frame(zone: str) -> pd.DataFrame:
     return zone_df
 
 
-def _representative_snapshot(zone_df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
-    """Latest complete row matching the current UTC weekday+hour (replay of a historical snapshot)."""
+def _timestamps_utc(col: pd.Series) -> pd.Series:
+    """
+    Timezone-aware UTC hour stamps from a timestamp column.
+
+    Normalizing before comparing matters because pandas treats a naive hour and an
+    aware one as *different* rather than raising: a frame whose committed hours are
+    aware while refreshed ones arrive naive (or the reverse) would otherwise report
+    a nonsense age and pick the wrong snapshot. The committed parquet is aware UTC
+    today, so this is a no-op there and a guard on the merge path.
+    """
+    if len(col) == 0:
+        return col.dt.tz_localize("UTC")
+    return col.dt.tz_localize("UTC") if col.dt.tz is None else col.dt.tz_convert("UTC")
+
+
+def _representative_snapshot(zone_df: pd.DataFrame, feature_cols: list[str]) -> tuple[pd.DataFrame, str]:
+    """
+    The newest complete row — the same "now" /forecast reports — unless that row is
+    older than RISK_SNAPSHOT_LOOKALIKE_AFTER_HOURS, in which case a replay of the
+    current UTC weekday+hour from history is the more representative choice.
+
+    Returns (one-row frame, selection mode) so callers surface which row was scored
+    instead of letting two dashboard panels claim different "nows" silently.
+    """
     complete_rows = zone_df.dropna(subset=feature_cols).sort_values("timestamp")
     if complete_rows.empty:
-        return complete_rows
+        return complete_rows, "newest"
 
-    now = datetime.now(timezone.utc)
+    slot_ts = _timestamps_utc(complete_rows["timestamp"])
+    newest = complete_rows.tail(1)
+    newest_age_hours = (_now_utc() - slot_ts.iloc[-1]).total_seconds() / 3600.0
+    if newest_age_hours <= RISK_SNAPSHOT_LOOKALIKE_AFTER_HOURS:
+        return newest, "newest"
+
+    now = _now_utc()
     current_slot = complete_rows[
-        (complete_rows["timestamp"].dt.dayofweek == now.weekday())
-        & (complete_rows["timestamp"].dt.hour == now.hour)
+        (slot_ts.dt.dayofweek == now.weekday()) & (slot_ts.dt.hour == now.hour)
     ]
     if not current_slot.empty:
-        return current_slot.tail(1)
+        return current_slot.tail(1), "weekday_hour_lookalike"
 
-    current_hour = complete_rows[complete_rows["timestamp"].dt.hour == now.hour]
+    current_hour = complete_rows[slot_ts.dt.hour == now.hour]
     if not current_hour.empty:
-        return current_hour.tail(1)
+        return current_hour.tail(1), "weekday_hour_lookalike"
 
-    return complete_rows.tail(1)
+    return newest, "newest"
 
 
 def _contiguous_hourly_tail(df: pd.DataFrame) -> pd.DataFrame:
@@ -350,6 +386,12 @@ class RiskResponse(BaseModel):
     capacity_mw: float
     top_factors: list[RiskFactor]
     is_proxy_capacity: bool
+    # Which selection path produced the row above, mirroring /forecast's served_by +
+    # origin_age_hours pair: a caller can now see that risk is replaying a lookalike
+    # instead of inferring it from a timestamp that quietly disagrees with the
+    # forecast origin next to it. Additive — deployed consumers keep every old field.
+    snapshot_mode: str = "newest"
+    snapshot_age_hours: float = 0.0
 
 
 class AssetSummary(BaseModel):
@@ -591,7 +633,7 @@ def get_risk(zone: str):
     if _state["features"] is None or _state["risk_model"] is None:
         raise HTTPException(503, "Risk model not loaded. Train models first — see README.")
 
-    latest_row = _representative_snapshot(_zone_frame(zone), RISK_FEATURE_COLS)
+    latest_row, snapshot_mode = _representative_snapshot(_zone_frame(zone), RISK_FEATURE_COLS)
     if latest_row.empty:
         raise HTTPException(404, f"No complete feature row available for zone '{zone}'")
 
@@ -600,16 +642,19 @@ def get_risk(zone: str):
     # Bucketed precomputed factors, not per-request SHAP — see risk_classifier.py.
     factors = (_state["risk_factors"] or {}).get(bucket_for_score(risk_score), [])
 
+    snapshot_ts = latest_row["timestamp"].iloc[0]
     return RiskResponse(
         zone=zone,
         asset_id=f"{zone}-FEEDER-01",
         risk_score=risk_score,
         status=dashboard_status(risk_score),
-        snapshot_timestamp=latest_row["timestamp"].iloc[0].isoformat(),
+        snapshot_timestamp=snapshot_ts.isoformat(),
         snapshot_load_mw=float(latest_row["load_mw"].iloc[0]),
         capacity_mw=float(latest_row["capacity_mw"].iloc[0]),
         top_factors=[RiskFactor(**f) for f in factors],
         is_proxy_capacity=bool(latest_row["capacity_is_proxy"].iloc[0]),
+        snapshot_mode=snapshot_mode,
+        snapshot_age_hours=round((_now_utc() - snapshot_ts).total_seconds() / 3600, 2),
     )
 
 
@@ -623,7 +668,7 @@ def list_assets():
     df = _state["features"]
     summaries = []
     for zone in df["zone"].unique():
-        latest = _representative_snapshot(df[df["zone"] == zone], RISK_FEATURE_COLS)
+        latest, _ = _representative_snapshot(df[df["zone"] == zone], RISK_FEATURE_COLS)
         if latest.empty:
             continue
         score = float(_state["risk_model"].predict_proba(latest[RISK_FEATURE_COLS])[0, 1])

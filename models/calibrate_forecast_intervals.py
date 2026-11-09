@@ -14,6 +14,7 @@ Usage (after models/train_baselines.py):
     python -m models.calibrate_forecast_intervals
 """
 
+import argparse
 import sys
 import json
 from pathlib import Path
@@ -23,7 +24,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from config import DATA_FEATURES_DIR, MODELS_DIR
+from config import DATA_FEATURES_DIR, MODELS_DIR, MODELS_OUT_DIR
 from models.train_baselines import (
     FEATURE_COLS, FEATURE_COLS_NO_WEATHER, train_val_test_split,
 )
@@ -88,7 +89,8 @@ def run_window(model, df, start, end, stride, horizon: int = HORIZON,
     return preds, actual, seasonal
 
 
-def calibrate(model, df, val, test, feature_cols, label: str) -> dict:
+def calibrate(model, df, val, test, feature_cols, label: str,
+              models_dir: Path = MODELS_DIR) -> dict:
     """
     Bands for one forecaster, from that forecaster's own held-out errors. A model with
     fewer inputs is less accurate, so it gets wider bands: reusing the primary model's
@@ -150,20 +152,37 @@ def calibrate(model, df, val, test, feature_cols, label: str) -> dict:
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--models-dir", type=Path, default=MODELS_OUT_DIR,
+                    help="where the forecaster(s) are read from and the interval JSON(s) "
+                         "are written. Defaults to the retrain output dir; falls back to "
+                         "the served artifact dir when nothing has been retrained. Never "
+                         "point it at data/models unless you mean to overwrite it.")
+    args = ap.parse_args()
+
+    models_dir = args.models_dir
+    primary_path = models_dir / "lightgbm_load_forecast.joblib"
+    if not primary_path.exists():
+        models_dir = MODELS_DIR
+        primary_path = models_dir / "lightgbm_load_forecast.joblib"
+    print(f"[calibrate] models dir: {models_dir}")
+
     df = pd.read_parquet(DATA_FEATURES_DIR / "training_features.parquet")
     _, val, test = train_val_test_split(df)
 
-    model = joblib.load(MODELS_DIR / "lightgbm_load_forecast.joblib")
-    artifact = calibrate(model, df, val, test, FEATURE_COLS, "weather-aware LightGBM")
-    out = MODELS_DIR / "forecast_intervals.json"
+    model = joblib.load(primary_path)
+    artifact = calibrate(model, df, val, test, FEATURE_COLS, "weather-aware LightGBM",
+                         models_dir=models_dir)
+    out = models_dir / "forecast_intervals.json"
     out.write_text(json.dumps(artifact, indent=2))
     print(f"[calibrate] saved -> {out}")
 
-    fallback_path = MODELS_DIR / "lightgbm_load_forecast_no_weather.joblib"
+    fallback_path = models_dir / "lightgbm_load_forecast_no_weather.joblib"
     if fallback_path.exists():
         fb = joblib.load(fallback_path)
-        fb_artifact = calibrate(fb, df, val, test, FEATURE_COLS_NO_WEATHER, "no-weather fallback")
-        fb_out = MODELS_DIR / "forecast_intervals_no_weather.json"
+        fb_artifact = calibrate(fb, df, val, test, FEATURE_COLS_NO_WEATHER,
+                                "no-weather fallback", models_dir=models_dir)
+        fb_out = models_dir / "forecast_intervals_no_weather.json"
         fb_out.write_text(json.dumps(fb_artifact, indent=2))
         print(f"[calibrate] saved -> {fb_out}")
         primary = artifact["evaluation"]["p10_p90_coverage_overall"]
